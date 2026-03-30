@@ -48,83 +48,138 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ── NBA Liquid Glass theme ──────────────────────────────────────
+   Light mode base. NBA red (#C9082A) and blue (#17408B) appear
+   only as accents — the glass panels stay white and frosted.    */
+
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --background: #f8f9fc;
+  --foreground: #0f172a;
+
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+
+  /* NBA blue as primary */
+  --primary: #17408b;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+
+  --muted: #e2e8f0;
+  --muted-foreground: #64748b;
+
+  /* Hardwood tan as accent — used sparingly */
+  --accent: #c4853c;
+  --accent-foreground: #ffffff;
+
+  /* NBA red for destructive / danger */
+  --destructive: #c9082a;
+
+  /* Subtle dark borders for components (buttons, inputs) */
+  --border: rgba(0, 0, 0, 0.09);
+  --input: rgba(0, 0, 0, 0.06);
+  --ring: rgba(23, 64, 139, 0.3);
+
+  /* Sports analytics chart palette */
+  --chart-1: #17408b;  /* NBA blue    */
+  --chart-2: #c9082a;  /* NBA red     */
+  --chart-3: #c4853c;  /* hardwood    */
+  --chart-4: #10b981;  /* emerald     */
+  --chart-5: #8b5cf6;  /* violet      */
+
+  --radius: 0.75rem;
+
+  --sidebar: rgba(255, 255, 255, 0.7);
+  --sidebar-foreground: #0f172a;
+  --sidebar-primary: #17408b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(23, 64, 139, 0.08);
+  --sidebar-accent-foreground: #17408b;
+  --sidebar-border: rgba(0, 0, 0, 0.09);
+  --sidebar-ring: rgba(23, 64, 139, 0.3);
 }
 
+/* Keep .dark defined so shadcn's dark: variants don't break if
+   a component ever checks for the class, but the app never applies it. */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #0f172a;
+  --foreground: #f8fafc;
+  --card: #1e293b;
+  --card-foreground: #f8fafc;
+  --popover: #1e293b;
+  --popover-foreground: #f8fafc;
+  --primary: #17408b;
+  --primary-foreground: #ffffff;
+  --secondary: #334155;
+  --secondary-foreground: #f8fafc;
+  --muted: #334155;
+  --muted-foreground: #94a3b8;
+  --accent: #c4853c;
+  --accent-foreground: #ffffff;
+  --destructive: #c9082a;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: rgba(23, 64, 139, 0.4);
+  --chart-1: #17408b;
+  --chart-2: #c9082a;
+  --chart-3: #c4853c;
+  --chart-4: #10b981;
+  --chart-5: #8b5cf6;
+  --sidebar: #1e293b;
+  --sidebar-foreground: #f8fafc;
+  --sidebar-primary: #17408b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: rgba(23, 64, 139, 0.15);
+  --sidebar-accent-foreground: #93c5fd;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: rgba(23, 64, 139, 0.4);
 }
+
+/* ── Animations ─────────────────────────────────────────────────── */
+
+@keyframes gradientDrift {
+  0%, 100% { background-position: 0% 50%; }
+  25%       { background-position: 50% 0%; }
+  50%       { background-position: 100% 50%; }
+  75%       { background-position: 50% 100%; }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Base layer ─────────────────────────────────────────────────── */
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
+
+  /* Animated gradient mesh lives on html so body can be transparent.
+     Pastel rose (#fdf0f3) and pastel sky (#edf2fb) are washed-out
+     versions of NBA red and blue — ≈5–6% saturation on white. */
   html {
     @apply font-sans;
+    background: linear-gradient(-45deg, #fdf0f3, #f8f9fc, #edf2fb, #f8f9fc);
+    background-size: 400% 400%;
+    animation: gradientDrift 20s ease infinite;
+  }
+
+  /* Body is transparent so the html gradient shows through.
+     Do NOT add bg-* classes to body in layout.tsx. */
+  body {
+    @apply text-foreground;
+    background: transparent;
   }
 }
