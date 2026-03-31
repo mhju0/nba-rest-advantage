@@ -439,11 +439,13 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
             />
 
             <div className="mt-2 flex items-center justify-between gap-2">
-              <CardTitle className="text-lg font-bold leading-tight text-slate-900">
-                <span className="font-heading font-bold">{game.awayTeam.abbreviation}</span>
-                <span className="mx-1.5 font-normal text-slate-300">@</span>
-                <span className="font-heading font-bold">{game.homeTeam.abbreviation}</span>
-              </CardTitle>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-lg font-bold leading-tight text-slate-900">
+                  <span className="font-heading font-bold">{game.awayTeam.abbreviation}</span>
+                  <span className="mx-1.5 font-normal text-slate-300">@</span>
+                  <span className="font-heading font-bold">{game.homeTeam.abbreviation}</span>
+                </CardTitle>
+              </div>
               <ChevronDown
                 className={cn(
                   "size-5 shrink-0 text-slate-400 transition-transform duration-300 ease-out",

@@ -5,8 +5,8 @@ import type {
   AccuracyResponse,
   AccuracyTier,
   ApiResponse,
+  MonthlyAccuracyPoint,
   PredictionDetail,
-  RollingAccuracyPoint,
 } from "@/types";
 
 export const revalidate = 86400; // 24 hours
@@ -27,7 +27,7 @@ const EMPTY_RESPONSE: AccuracyResponse = {
   correctPredictions: 0,
   accuracyPct: 0,
   tiers: EMPTY_TIERS,
-  rolling30Days: [],
+  monthlyTrend: [],
   recentPredictions: [],
 };
 
@@ -46,8 +46,8 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
       high: { games: 0, correct: 0 },
     };
 
-    // Map of date → { total, correct } for rolling accuracy
-    const dateMap = new Map<string, { total: number; correct: number }>();
+    // Map of "YYYY-MM" → { total, correct } for monthly accuracy trend
+    const monthMap = new Map<string, { total: number; correct: number }>();
 
     let totalCorrect = 0;
 
@@ -68,11 +68,12 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
         if (isCorrect) tierCounters.low.correct++;
       }
 
-      // Per-date totals for rolling accuracy
-      const entry = dateMap.get(row.date) ?? { total: 0, correct: 0 };
+      // Monthly grouping (YYYY-MM) for trend chart
+      const month = row.date.slice(0, 7);
+      const entry = monthMap.get(month) ?? { total: 0, correct: 0 };
       entry.total++;
       if (isCorrect) entry.correct++;
-      dateMap.set(row.date, entry);
+      monthMap.set(month, entry);
     }
 
     // ── Tiers ─────────────────────────────────────────────────────
@@ -100,31 +101,27 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
       },
     ];
 
-    // ── Rolling 30-day cumulative accuracy ────────────────────────
-    // dateMap keys are already in ascending order (insertion order mirrors
-    // the query's ORDER BY games.date). Build cumulative series and take last 30.
-    const sortedDates = Array.from(dateMap.keys()).sort();
+    // ── Monthly cumulative accuracy trend ─────────────────────────
+    const sortedMonths = Array.from(monthMap.keys()).sort();
     let cumTotal = 0;
     let cumCorrect = 0;
-    const allPoints: RollingAccuracyPoint[] = [];
+    const monthlyTrend: MonthlyAccuracyPoint[] = [];
 
-    for (const date of sortedDates) {
-      const { total, correct } = dateMap.get(date)!;
+    for (const month of sortedMonths) {
+      const { total, correct } = monthMap.get(month)!;
       cumTotal += total;
       cumCorrect += correct;
-      allPoints.push({
-        date,
+      monthlyTrend.push({
+        month,
         cumulativeGames: cumTotal,
         cumulativeCorrect: cumCorrect,
         accuracyPct: accuracyPct(cumCorrect, cumTotal),
       });
     }
 
-    const rolling30Days = allPoints.slice(-30);
-
-    // ── Last 10 predictions (newest first) ────────────────────────
+    // ── Last 20 predictions (newest first) ────────────────────────
     const recentPredictions: PredictionDetail[] = rows
-      .slice(-10)
+      .slice(-20)
       .reverse()
       .map((row) => ({
         date: row.date,
@@ -157,7 +154,7 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
       correctPredictions: totalCorrect,
       accuracyPct: accuracyPct(totalCorrect, rows.length),
       tiers,
-      rolling30Days,
+      monthlyTrend,
       recentPredictions,
     };
 

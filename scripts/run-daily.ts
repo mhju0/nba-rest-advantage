@@ -10,7 +10,7 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as Schema from "@/lib/db/schema";
 import { fatigueScores, games, predictions, teams } from "@/lib/db/schema";
-import { calculateFatigue, getSeasonTypeMultiplier } from "@/lib/fatigue";
+import { calculateFatigue } from "@/lib/fatigue";
 import { fetchRecentGamesForTeam } from "@/lib/fatigue-recent-games";
 import { loadEnvLocal } from "@/lib/load-env-local";
 
@@ -68,22 +68,33 @@ async function main(): Promise<void> {
     const gameDateStr = String(game.date);
     const homeLat = parseFloat(home.latitude);
     const homeLon = parseFloat(home.longitude);
+    const awayLat = parseFloat(away.latitude);
+    const awayLon = parseFloat(away.longitude);
     const visitingAltitudeAway = home.altitudeFlag === true;
 
     const recentHome = await fetchRecentGamesForTeam(appDb, game.homeTeamId, gameDateStr);
-    const homeResult = calculateFatigue(gameDateStr, recentHome, false, homeLat, homeLon);
+    const homeResult = calculateFatigue(
+      gameDateStr,
+      recentHome,
+      false,
+      homeLat,
+      homeLon,
+      homeLat,
+      homeLon,
+      true
+    );
 
     const recentAway = await fetchRecentGamesForTeam(appDb, game.awayTeamId, gameDateStr);
     const awayResult = calculateFatigue(
       gameDateStr,
       recentAway,
       visitingAltitudeAway,
+      awayLat,
+      awayLon,
       homeLat,
-      homeLon
+      homeLon,
+      false
     );
-
-    // Playoff/Finals games are more physically taxing — multiply the fatigue score.
-    const playoffMultiplier = getSeasonTypeMultiplier(game.externalId, gameDateStr);
 
     const rows: Array<{ teamId: number; result: typeof homeResult }> = [
       { teamId: game.homeTeamId, result: homeResult },
@@ -91,7 +102,7 @@ async function main(): Promise<void> {
     ];
 
     for (const { teamId, result: r } of rows) {
-      const adjustedScore = Math.round(r.score * playoffMultiplier * 100) / 100;
+      const adjustedScore = Math.round(r.score * 100) / 100;
       await appDb.insert(fatigueScores).values({
         gameId: game.id,
         teamId,

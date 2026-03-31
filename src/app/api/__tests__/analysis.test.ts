@@ -23,6 +23,7 @@ function row(
 ) {
   return {
     date,
+    season: "2023-24",
     homeFatigueScore: String(homeFatigue),
     awayFatigueScore: String(awayFatigue),
     homeScore,
@@ -76,6 +77,8 @@ describe("GET /api/analysis", () => {
       }),
     });
     expect(Array.isArray(d.monthlyTrends)).toBe(true);
+    expect(Array.isArray(d.monthlyWinRateBySeason)).toBe(true);
+    expect(d.monthlyWinRatePooledByMonth).toHaveLength(7);
   });
 
   it("surfaces percentages between 0 and 100 everywhere", async () => {

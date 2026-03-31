@@ -17,6 +17,10 @@ const NYC_LON = -73.9934;
 const DEN_LAT = 39.7487;
 const DEN_LON = -105.0077;
 
+/** TD Garden area. */
+const BOS_LAT = 42.3662;
+const BOS_LON = -71.0621;
+
 function baseRecent(overrides: Partial<RecentGame> = {}): RecentGame {
   return {
     date: "2025-01-01",
@@ -33,15 +37,47 @@ function baseRecent(overrides: Partial<RecentGame> = {}): RecentGame {
   };
 }
 
+/** Subject team is LAL at home (venue = Crypto.com). */
+function fatigueHomeTeam(
+  gameDate: string,
+  recent: RecentGame[],
+  isVisitingAltitude = false
+) {
+  return calculateFatigue(
+    gameDate,
+    recent,
+    isVisitingAltitude,
+    LA_LAT,
+    LA_LON,
+    LA_LAT,
+    LA_LON,
+    true
+  );
+}
+
+/** Subject team is LAL on the road at `venueLat` / `venueLon`. */
+function fatigueAwayTeam(
+  gameDate: string,
+  recent: RecentGame[],
+  isVisitingAltitude: boolean,
+  venueLat: number,
+  venueLon: number
+) {
+  return calculateFatigue(
+    gameDate,
+    recent,
+    isVisitingAltitude,
+    LA_LAT,
+    LA_LON,
+    venueLat,
+    venueLon,
+    false
+  );
+}
+
 describe("calculateFatigue", () => {
   it("season opener (no recent games) → fully rested baseline", () => {
-    const result = calculateFatigue(
-      "2025-10-22",
-      [],
-      false,
-      LA_LAT,
-      LA_LON
-    );
+    const result = fatigueHomeTeam("2025-10-22", []);
 
     expect(result.score).toBe(0);
     expect(result.decayLoadScore).toBe(0);
@@ -58,7 +94,7 @@ describe("calculateFatigue", () => {
       baseRecent({ date: "2025-01-01", isHome: true }),
     ];
 
-    const result = calculateFatigue("2025-01-08", recent, false, LA_LAT, LA_LON);
+    const result = fatigueHomeTeam("2025-01-08", recent);
 
     expect(result.daysSinceLastGame).toBe(7);
     expect(result.freshnessBonus).toBeLessThanOrEqual(-1);
@@ -73,8 +109,8 @@ describe("calculateFatigue", () => {
       baseRecent({ date: "2025-01-05", isHome: true }),
     ];
 
-    const consecutive = calculateFatigue("2025-01-06", recent, false, LA_LAT, LA_LON);
-    const spaced = calculateFatigue("2025-01-07", recent, false, LA_LAT, LA_LON);
+    const consecutive = fatigueHomeTeam("2025-01-06", recent);
+    const spaced = fatigueHomeTeam("2025-01-07", recent);
 
     expect(consecutive.isBackToBack).toBe(true);
     expect(spaced.isBackToBack).toBe(false);
@@ -92,8 +128,8 @@ describe("calculateFatigue", () => {
       baseRecent({ date: "2025-06-03", isHome: true }),
     ];
 
-    const stacked = calculateFatigue("2025-06-04", threeInFour, false, LA_LAT, LA_LON);
-    const light = calculateFatigue("2025-06-04", singleBeforeFourth, false, LA_LAT, LA_LON);
+    const stacked = fatigueHomeTeam("2025-06-04", threeInFour);
+    const light = fatigueHomeTeam("2025-06-04", singleBeforeFourth);
 
     expect(stacked.gamesInLast7Days).toBe(3);
     expect(stacked.score).toBeGreaterThan(light.score + 2);
@@ -109,8 +145,8 @@ describe("calculateFatigue", () => {
 
     const light: RecentGame[] = [baseRecent({ date: "2025-03-07", isHome: true })];
 
-    const busyResult = calculateFatigue("2025-03-08", busy, false, LA_LAT, LA_LON);
-    const lightResult = calculateFatigue("2025-03-08", light, false, LA_LAT, LA_LON);
+    const busyResult = fatigueHomeTeam("2025-03-08", busy);
+    const lightResult = fatigueHomeTeam("2025-03-08", light);
 
     expect(busyResult.densityMultiplier).toBeGreaterThan(1);
     expect(busyResult.score).toBeGreaterThan(lightResult.score + 1.5);
@@ -135,8 +171,8 @@ describe("calculateFatigue", () => {
       }),
     ];
 
-    const homeStay = calculateFatigue("2025-02-12", homeOnly, false, LA_LAT, LA_LON);
-    const traveled = calculateFatigue("2025-02-12", coastToCoast, false, LA_LAT, LA_LON);
+    const homeStay = fatigueHomeTeam("2025-02-12", homeOnly);
+    const traveled = fatigueHomeTeam("2025-02-12", coastToCoast);
 
     expect(traveled.travelDistanceMiles).toBeGreaterThan(1000);
     expect(traveled.score).toBeGreaterThan(homeStay.score + 0.8);
@@ -147,8 +183,8 @@ describe("calculateFatigue", () => {
       baseRecent({ date: "2025-04-05", isHome: true }),
     ];
 
-    const flat = calculateFatigue("2025-04-07", recent, false, LA_LAT, LA_LON);
-    const altitude = calculateFatigue("2025-04-07", recent, true, DEN_LAT, DEN_LON);
+    const flat = fatigueHomeTeam("2025-04-07", recent);
+    const altitude = fatigueAwayTeam("2025-04-07", recent, true, DEN_LAT, DEN_LON);
 
     expect(altitude.altitudeMultiplier).toBe(1.15);
     expect(flat.altitudeMultiplier).toBe(1);
@@ -166,7 +202,7 @@ describe("calculateFatigue", () => {
       }),
     ];
 
-    const flatNoB2b = calculateFatigue(
+    const flatNoB2b = fatigueAwayTeam(
       "2025-11-12",
       recent,
       false,
@@ -174,7 +210,7 @@ describe("calculateFatigue", () => {
       LA_LON
     );
 
-    const stacked = calculateFatigue(
+    const stacked = fatigueAwayTeam(
       "2025-11-10",
       recent,
       true,
@@ -188,49 +224,51 @@ describe("calculateFatigue", () => {
   });
 
   it("adds +0.5 when the prior game went to one overtime", () => {
-    const noOt = calculateFatigue(
-      "2025-01-03",
-      [baseRecent({ date: "2025-01-02", overtimePeriods: 0 })],
-      false,
-      LA_LAT,
-      LA_LON
-    );
-    const oneOt = calculateFatigue(
-      "2025-01-03",
-      [baseRecent({ date: "2025-01-02", overtimePeriods: 1 })],
-      false,
-      LA_LAT,
-      LA_LON
-    );
+    const noOt = fatigueHomeTeam("2025-01-03", [
+      baseRecent({ date: "2025-01-02", overtimePeriods: 0 }),
+    ]);
+    const oneOt = fatigueHomeTeam("2025-01-03", [
+      baseRecent({ date: "2025-01-02", overtimePeriods: 1 }),
+    ]);
     expect(oneOt.overtimeFatigueBonus).toBe(0.5);
     expect(oneOt.isOvertimePenalty).toBe(true);
     expect(oneOt.score - noOt.score).toBeCloseTo(0.5, 5);
   });
 
   it("adds +1.0 when the prior game went to double overtime or more", () => {
-    const oneOt = calculateFatigue(
-      "2025-01-03",
-      [baseRecent({ date: "2025-01-02", overtimePeriods: 1 })],
-      false,
-      LA_LAT,
-      LA_LON
-    );
-    const twoOt = calculateFatigue(
-      "2025-01-03",
-      [baseRecent({ date: "2025-01-02", overtimePeriods: 2 })],
-      false,
-      LA_LAT,
-      LA_LON
-    );
+    const oneOt = fatigueHomeTeam("2025-01-03", [
+      baseRecent({ date: "2025-01-02", overtimePeriods: 1 }),
+    ]);
+    const twoOt = fatigueHomeTeam("2025-01-03", [
+      baseRecent({ date: "2025-01-02", overtimePeriods: 2 }),
+    ]);
     expect(twoOt.overtimeFatigueBonus).toBe(1);
     expect(twoOt.score - oneOt.score).toBeCloseTo(0.5, 5);
+  });
+
+  it("away → away with 2+ calendar days off assumes travel via home (more miles than a 1-day road leg)", () => {
+    const recent: RecentGame[] = [
+      baseRecent({
+        date: "2025-01-01",
+        isHome: false,
+        opponentLat: NYC_LAT,
+        opponentLon: NYC_LON,
+      }),
+    ];
+
+    const oneDayGap = fatigueAwayTeam("2025-01-02", recent, false, BOS_LAT, BOS_LON);
+    const multiDayGap = fatigueAwayTeam("2025-01-04", recent, false, BOS_LAT, BOS_LON);
+
+    expect(multiDayGap.travelDistanceMiles).toBeGreaterThan(
+      oneDayGap.travelDistanceMiles + 2000
+    );
   });
 });
 
 describe("calculateRestAdvantage", () => {
   it("positive when away team is more fatigued (home rested advantage)", () => {
-    const home = calculateFatigue("2025-01-10", [], false, LA_LAT, LA_LON);
-    const awayHeavy = calculateFatigue(
+    const home = fatigueHomeTeam("2025-01-10", []);
+    const awayHeavy = fatigueAwayTeam(
       "2025-01-10",
       [baseRecent({ date: "2025-01-09", isHome: true })],
       false,
@@ -242,14 +280,10 @@ describe("calculateRestAdvantage", () => {
   });
 
   it("negative when home team is more fatigued", () => {
-    const homeHeavy = calculateFatigue(
-      "2025-01-10",
-      [baseRecent({ date: "2025-01-09", isHome: true })],
-      false,
-      LA_LAT,
-      LA_LON
-    );
-    const away = calculateFatigue("2025-01-10", [], false, LA_LAT, LA_LON);
+    const homeHeavy = fatigueHomeTeam("2025-01-10", [
+      baseRecent({ date: "2025-01-09", isHome: true }),
+    ]);
+    const away = fatigueAwayTeam("2025-01-10", [], false, LA_LAT, LA_LON);
 
     expect(calculateRestAdvantage(homeHeavy, away)).toBeLessThan(0);
   });

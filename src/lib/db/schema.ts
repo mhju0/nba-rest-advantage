@@ -39,10 +39,8 @@ export const games = pgTable(
     awayScore: integer("away_score"),
     status: varchar("status").notNull().default("scheduled"),
     /**
-     * Season segment: "regular" (default), "playoffs" (rounds 1–3), or "finals".
-     * Derived from the external_id prefix (004 = playoffs/finals) and game month.
+     * Pipeline classification (regular vs postseason). App queries filter to "regular" for analysis.
      */
-    /** "regular" | "playoffs" | "finals" — see fetch_schedule.get_game_type */
     gameType: varchar("game_type", { length: 16 }).notNull().default("regular"),
     spread: decimal("spread"),
     /** Overtime periods beyond regulation (1 = one OT, 2 = double OT, …). */

@@ -6,7 +6,8 @@ import type {
   ApiResponse,
   HomeAwayBreakdown,
   MonthlyTrend,
-  SeasonTypeStats,
+  RegularSeasonMonthStat,
+  SeasonMonthlyWinRate,
   ThresholdBucket,
 } from "@/types";
 
@@ -15,6 +16,23 @@ export const revalidate = 86400;
 
 const NEUTRAL_THRESHOLD = 0.5;
 const THRESHOLDS = [2, 3, 5, 7] as const;
+
+/** Regular-season calendar months (NBA) in chart order. */
+const NBA_REGULAR_MONTHS: readonly { label: string; calendarMonth: number }[] = [
+  { label: "Oct", calendarMonth: 10 },
+  { label: "Nov", calendarMonth: 11 },
+  { label: "Dec", calendarMonth: 12 },
+  { label: "Jan", calendarMonth: 1 },
+  { label: "Feb", calendarMonth: 2 },
+  { label: "Mar", calendarMonth: 3 },
+  { label: "Apr", calendarMonth: 4 },
+] as const;
+
+function regularSeasonMonthLabel(dateYmd: string): string | null {
+  const m = parseInt(dateYmd.slice(5, 7), 10);
+  const hit = NBA_REGULAR_MONTHS.find((x) => x.calendarMonth === m);
+  return hit?.label ?? null;
+}
 
 /** Returns a win percentage (0–100, 1 decimal). */
 function winPct(wins: number, total: number): number {
@@ -25,8 +43,7 @@ function winPct(wins: number, total: number): number {
 
 type ProcessedRow = {
   date: string;
-  /** "regular" | "playoffs" | "finals" */
-  gameType: string;
+  season: string;
   /** awayFatigue − homeFatigue. Positive → home team is more rested. */
   differential: number;
   restedTeamSide: "home" | "away";
@@ -34,9 +51,9 @@ type ProcessedRow = {
   restedTeamCoveredSpread: boolean | null;
 };
 
-// ─── Aggregate a set of processed rows into SeasonTypeStats ─────
+// ─── Aggregate processed rows into AnalysisResponse stats ───────
 
-function buildStats(rows: ProcessedRow[]): SeasonTypeStats {
+function buildStats(rows: ProcessedRow[]): Omit<AnalysisResponse, never> {
   const decidable = rows.filter(
     (r) => Math.abs(r.differential) >= NEUTRAL_THRESHOLD
   );
@@ -104,6 +121,57 @@ function buildStats(rows: ProcessedRow[]): SeasonTypeStats {
       winPct: winPct(wins, games),
     }));
 
+  const bySeasonMonth = new Map<string, Map<string, { wins: number; games: number }>>();
+  const pooledByLabel = new Map<string, { wins: number; games: number }>();
+
+  for (const row of decidable) {
+    const label = regularSeasonMonthLabel(row.date);
+    if (!label) continue;
+
+    const pool = pooledByLabel.get(label) ?? { wins: 0, games: 0 };
+    pool.games++;
+    if (row.restedTeamWon) pool.wins++;
+    pooledByLabel.set(label, pool);
+
+    if (!bySeasonMonth.has(row.season)) {
+      bySeasonMonth.set(row.season, new Map());
+    }
+    const sm = bySeasonMonth.get(row.season)!;
+    const cell = sm.get(label) ?? { wins: 0, games: 0 };
+    cell.games++;
+    if (row.restedTeamWon) cell.wins++;
+    sm.set(label, cell);
+  }
+
+  const monthlyWinRateBySeason: SeasonMonthlyWinRate[] = Array.from(
+    bySeasonMonth.entries()
+  )
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([season, monthMap]) => ({
+      season,
+      months: NBA_REGULAR_MONTHS.map(({ label: lbl }) => {
+        const x = monthMap.get(lbl) ?? { wins: 0, games: 0 };
+        return {
+          label: lbl,
+          games: x.games,
+          restedTeamWins: x.wins,
+          winPct: winPct(x.wins, x.games),
+        };
+      }),
+    }));
+
+  const monthlyWinRatePooledByMonth: RegularSeasonMonthStat[] = NBA_REGULAR_MONTHS.map(
+    ({ label: lbl }) => {
+      const x = pooledByLabel.get(lbl) ?? { wins: 0, games: 0 };
+      return {
+        label: lbl,
+        games: x.games,
+        restedTeamWins: x.wins,
+        winPct: winPct(x.wins, x.games),
+      };
+    }
+  );
+
   // ATS overall
   const spreadGames = decidable.filter((r) => r.restedTeamCoveredSpread !== null);
   const spreadCovers = spreadGames.filter(
@@ -125,6 +193,8 @@ function buildStats(rows: ProcessedRow[]): SeasonTypeStats {
     thresholds,
     homeAwayBreakdown,
     monthlyTrends,
+    monthlyWinRateBySeason,
+    monthlyWinRatePooledByMonth,
     atsOverall,
   };
 }
@@ -161,7 +231,7 @@ export async function GET(): Promise<NextResponse<ApiResponse<AnalysisResponse>>
 
       processed.push({
         date: row.date,
-        gameType: row.gameType,
+        season: row.season,
         differential,
         restedTeamSide,
         restedTeamWon,
@@ -169,29 +239,18 @@ export async function GET(): Promise<NextResponse<ApiResponse<AnalysisResponse>>
       });
     }
 
-    // ── Build stats for each segment ──────────────────────────────
-    const allStats = buildStats(processed);
-    const regularStats = buildStats(
-      processed.filter((r) => r.gameType === "regular")
-    );
-    const playoffStats = buildStats(
-      processed.filter(
-        (r) => r.gameType === "playoffs" || r.gameType === "finals"
-      )
-    );
+    const stats = buildStats(processed);
 
     const response: AnalysisResponse = {
-      totalGames: allStats.totalGames,
-      overallWins: allStats.overallWins,
-      overallWinRate: allStats.overallWinRate,
-      thresholds: allStats.thresholds,
-      homeAwayBreakdown: allStats.homeAwayBreakdown,
-      monthlyTrends: allStats.monthlyTrends,
-      atsOverall: allStats.atsOverall,
-      seasonTypeBreakdown: {
-        regular: regularStats,
-        playoffs: playoffStats,
-      },
+      totalGames: stats.totalGames,
+      overallWins: stats.overallWins,
+      overallWinRate: stats.overallWinRate,
+      thresholds: stats.thresholds,
+      homeAwayBreakdown: stats.homeAwayBreakdown,
+      monthlyTrends: stats.monthlyTrends,
+      monthlyWinRateBySeason: stats.monthlyWinRateBySeason,
+      monthlyWinRatePooledByMonth: stats.monthlyWinRatePooledByMonth,
+      atsOverall: stats.atsOverall,
     };
 
     return NextResponse.json({ data: response, error: null });

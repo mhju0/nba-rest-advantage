@@ -71,6 +71,9 @@ async function main(): Promise<void> {
           result: FatigueResult;
         }> = [];
 
+        const awayLat = parseFloat(away.latitude);
+        const awayLon = parseFloat(away.longitude);
+
         if (!existingKeys.has(`${game.id}:${game.homeTeamId}`)) {
           const recentHome = await fetchRecentGamesForTeam(
             appDb,
@@ -85,7 +88,10 @@ async function main(): Promise<void> {
               recentHome,
               false,
               homeLat,
-              homeLon
+              homeLon,
+              homeLat,
+              homeLon,
+              true
             ),
           });
         }
@@ -103,8 +109,11 @@ async function main(): Promise<void> {
               gameDateStr,
               recentAway,
               visitingAltitudeAway,
+              awayLat,
+              awayLon,
               homeLat,
-              homeLon
+              homeLon,
+              false
             ),
           });
         }

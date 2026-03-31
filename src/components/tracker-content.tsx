@@ -12,10 +12,10 @@ import {
   ReferenceLine,
 } from "recharts"
 import type { TooltipContentProps } from "recharts"
-import { format, parseISO } from "date-fns"
+import { format, parse, parseISO } from "date-fns"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import type { ApiResponse, AccuracyResponse, AccuracyTier, RollingAccuracyPoint } from "@/types"
+import type { ApiResponse, AccuracyResponse, AccuracyTier, MonthlyAccuracyPoint } from "@/types"
 
 // ─── Shared styles ────────────────────────────────────────────────
 
@@ -57,8 +57,8 @@ const TIER_CONFIG: Record<
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function fmtDate(iso: string): string {
-  return format(parseISO(iso), "MMM d, ''yy")
+function fmtMonth(ym: string): string {
+  return format(parse(ym, "yyyy-MM", new Date()), "MMM ''yy")
 }
 
 function pct(n: number): string {
@@ -69,13 +69,13 @@ function pct(n: number): string {
 
 function AccuracyTooltip({ active, payload }: TooltipContentProps) {
   if (!active || !payload?.length) return null
-  const d = payload[0].payload as RollingAccuracyPoint
+  const d = payload[0].payload as MonthlyAccuracyPoint
   return (
     <div
       className="rounded-xl border border-white/60 px-3 py-2 text-xs shadow-lg"
       style={{ background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)" }}
     >
-      <p className="font-semibold text-slate-800">{fmtDate(d.date)}</p>
+      <p className="font-semibold text-slate-800">{fmtMonth(d.month)}</p>
       <p className="mt-0.5 text-[#17408B]">
         Accuracy: <span className="font-bold">{d.accuracyPct}%</span>
       </p>
@@ -183,7 +183,7 @@ export function TrackerContent() {
         <p className="mt-2 text-base font-semibold text-slate-700">Prediction Accuracy</p>
         <p className="mt-1 text-sm text-slate-400">
           {noData
-            ? "No predictions yet — tracking begins when games are analyzed"
+            ? "No predictions yet — run the backfill script to populate"
             : `${data.correctPredictions.toLocaleString()} of ${data.totalPredictions.toLocaleString()} predictions correct`}
         </p>
       </div>
@@ -227,15 +227,15 @@ export function TrackerContent() {
         })}
       </div>
 
-      {/* ── 3. Rolling 30-day accuracy chart ──────────────────────── */}
+      {/* ── 3. Monthly accuracy trend chart ───────────────────────── */}
       <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-        <p className="text-sm font-semibold text-slate-800">Rolling Accuracy Trend</p>
+        <p className="text-sm font-semibold text-slate-800">Monthly Accuracy Trend</p>
         <p className="mt-0.5 text-xs text-slate-400">
-          Cumulative prediction accuracy over time
+          Cumulative prediction accuracy, grouped by month · 2015–present
         </p>
 
         <div className="mt-6 h-56">
-          {data.rolling30Days.length === 0 ? (
+          {data.monthlyTrend.length === 0 ? (
             <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200">
               <p className="text-xs text-slate-400">
                 Accuracy trend will appear as predictions accumulate
@@ -244,13 +244,13 @@ export function TrackerContent() {
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
-                data={data.rolling30Days}
+                data={data.monthlyTrend}
                 margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
                 <XAxis
-                  dataKey="date"
-                  tickFormatter={(v: string) => fmtDate(v)}
+                  dataKey="month"
+                  tickFormatter={fmtMonth}
                   interval="preserveStartEnd"
                   tick={{ fontSize: 10, fill: "#94a3b8" }}
                   tickLine={false}
@@ -297,7 +297,7 @@ export function TrackerContent() {
         </div>
       </div>
 
-      {/* ── 4. Recent predictions table ───────────────────────────── */}
+      {/* ── 4. Recent predictions table (last 20) ─────────────────── */}
       <div className="rounded-3xl border border-white/50 p-6" style={glass}>
         <p className="mb-4 text-sm font-semibold text-slate-800">Recent Predictions</p>
 
@@ -392,8 +392,9 @@ export function TrackerContent() {
         </p>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
           Predictions are based on rest advantage differential — the difference in computed
-          fatigue scores between the two teams. A higher differential indicates greater
-          confidence. Games where the more-rested team wins are counted as correct predictions.
+          fatigue scores between the two teams. The more-rested team (lower fatigue score)
+          is predicted to win. A higher differential indicates greater confidence. Only regular
+          season games with a rest advantage of ≥ 0.5 are counted.
         </p>
       </div>
 

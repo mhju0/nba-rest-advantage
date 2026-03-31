@@ -1,39 +1,32 @@
 import { expect, test } from "@playwright/test";
 
-function toYmd(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
 test.describe("Home page", () => {
-  test("loads dashboard heading, date control, and navigation context", async ({ page }) => {
+  test("loads dashboard heading, season control, and month tabs", async ({ page }) => {
     await page.goto("/");
 
     await expect(
       page.getByRole("heading", { name: "Rest Advantage Dashboard" })
     ).toBeVisible();
 
-    const dateInput = page.locator('input[type="date"]');
-    await expect(dateInput).toBeVisible();
-
-    const today = toYmd(new Date());
-    await expect(dateInput).toHaveValue(today);
+    await expect(page.getByLabelText("Season")).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Oct$/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Dec$/ })).toBeVisible();
   });
 
-  test("previous-day control moves the date picker to yesterday", async ({ page }) => {
+  test("previous-day control moves the selected date display backward", async ({ page }) => {
     await page.goto("/");
 
-    const dateInput = page.locator('input[type="date"]');
-    const before = await dateInput.inputValue();
+    const display = page.getByTestId("selected-date-display");
+    await expect(display).not.toHaveText("Pick a date", { timeout: 60_000 });
+
+    const before = await display.textContent();
+    expect(before).toBeTruthy();
 
     await page.getByRole("button", { name: "Previous day" }).click();
 
-    const after = await dateInput.inputValue();
-    const beforeDate = new Date(`${before}T12:00:00`);
-    beforeDate.setDate(beforeDate.getDate() - 1);
-    expect(after).toBe(toYmd(beforeDate));
+    const after = await display.textContent();
+    expect(after).toBeTruthy();
+    expect(after).not.toBe(before);
   });
 
   test("Christmas 2024 slate shows matchup cards with team abbreviations and fatigue decimals", async ({
@@ -41,14 +34,17 @@ test.describe("Home page", () => {
   }) => {
     await page.goto("/");
 
-    const dateInput = page.locator('input[type="date"]');
-    await dateInput.fill("2024-12-25");
+    await page.getByLabelText("Season").selectOption("2024-25");
+    await page.getByRole("button", { name: /^Dec$/ }).click();
 
-    const gamesResponse = page.waitForResponse(
+    const dec25 = page.getByRole("button", { name: /December 25, 2024/ });
+    await expect(dec25).toBeVisible({ timeout: 60_000 });
+    await dec25.click();
+
+    await page.waitForResponse(
       (res) =>
         res.url().includes("/api/games/2024-12-25") && res.status() === 200
     );
-    await gamesResponse;
 
     const matchupHeading = page.getByText(/\b[A-Z]{3}\s*@\s*[A-Z]{3}\b/).first();
     await expect(matchupHeading).toBeVisible({ timeout: 60_000 });
@@ -56,19 +52,37 @@ test.describe("Home page", () => {
     await expect(page.locator(".tabular-nums").filter({ hasText: /\d+\.\d/ }).first()).toBeVisible();
   });
 
-  test("off-season date shows empty state", async ({ page }) => {
+  test("previous day from an early season date can reach a day with no games", async ({ page }) => {
     await page.goto("/");
 
-    const dateInput = page.locator('input[type="date"]');
-    await dateInput.fill("2026-08-01");
+    await page.getByLabelText("Season").selectOption("2024-25");
+    await page.getByRole("button", { name: /^Oct$/ }).click();
 
     await page.waitForResponse(
       (res) =>
-        res.url().includes("/api/games/2026-08-01") && res.status() === 200
+        res.url().includes("/api/games/dates") &&
+        res.url().includes("month=10") &&
+        res.status() === 200
     );
 
-    await expect(page.getByText("No games scheduled")).toBeVisible({
-      timeout: 60_000,
-    });
+    const firstDayWithGames = page.locator('button[aria-label*="games"]').first();
+    await expect(firstDayWithGames).toBeVisible({ timeout: 60_000 });
+    await firstDayWithGames.click();
+
+    await page.waitForResponse(
+      (res) => res.url().includes("/api/games/20") && res.status() === 200
+    );
+
+    const prev = page.getByRole("button", { name: "Previous day" });
+    for (let i = 0; i < 45; i++) {
+      await prev.click();
+      const empty = page.getByText("No games scheduled");
+      if (await empty.isVisible()) {
+        await expect(empty).toBeVisible();
+        return;
+      }
+    }
+
+    throw new Error("Expected to reach a date with no games within 45 previous-day steps");
   });
 });

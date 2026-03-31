@@ -8,9 +8,10 @@
  *    exponentially over time (yesterday's game hurts more than
  *    one from 5 days ago)
  *
- * 2. TRAVEL LOAD: Cumulative travel distance over the lookback
- *    window, scaled logarithmically (the first 1000 miles hurt
- *    more than the next 1000)
+ * 2. TRAVEL LOAD: Cumulative travel distance over the lookback window (each leg
+ *    uses home/away context: e.g. away→home returns to home city; away→away
+ *    uses a direct road leg on 0–1 day gaps, or via home when 2+ days off),
+ *    then log-scaled (the first 1000 miles hurt more than the next 1000)
  *
  * 3. MULTIPLIERS: Contextual factors that amplify base fatigue:
  *    - Back-to-back: compounds the decay load
@@ -24,6 +25,7 @@
  * Range: typically 0 (fully rested) to ~15 (extremely fatigued)
  */
 
+import { differenceInCalendarDays, parseISO } from "date-fns";
 import { haversineDistance } from "./haversine";
 
 // ─── Configuration ──────────────────────────────────────────────
@@ -103,6 +105,77 @@ export interface FatigueResult {
   isOvertimePenalty: boolean;
 }
 
+/** Arenas closer than this (miles) are treated as the same venue. */
+const SAME_ARENA_MILES = 1;
+
+function calendarDaysBetween(earlierYmd: string, laterYmd: string): number {
+  return differenceInCalendarDays(parseISO(laterYmd), parseISO(earlierYmd));
+}
+
+function isSameArena(lat1: number, lon1: number, lat2: number, lon2: number): boolean {
+  return haversineDistance(lat1, lon1, lat2, lon2) < SAME_ARENA_MILES;
+}
+
+/**
+ * Miles traveled from the end of the previous game to the start of the current game.
+ *
+ * When `previousGame` is null, the team is assumed to start at home before the first
+ * game in the lookback window (no prior game in data).
+ *
+ * Rules:
+ * - Home → home: 0
+ * - Home → away: home city → away arena
+ * - Away → home: previous away arena → home city
+ * - Away → away: if gap is 2+ calendar days, assume fly home: (away → home) + (home → new away);
+ *   if back-to-back or 1 day off, direct away → away.
+ * - Same arena twice in a row: 0
+ */
+function travelMilesBetweenGames(
+  previousGame: RecentGame | null,
+  currentGameIsHome: boolean,
+  currentArenaLat: number,
+  currentArenaLon: number,
+  teamHomeLat: number,
+  teamHomeLon: number,
+  daysBetween: number
+): number {
+  if (previousGame === null) {
+    if (currentGameIsHome) {
+      return 0;
+    }
+    return haversineDistance(teamHomeLat, teamHomeLon, currentArenaLat, currentArenaLon);
+  }
+
+  const prevWasHome = previousGame.isHome;
+  const prevArenaLat = prevWasHome ? previousGame.teamLat : previousGame.opponentLat;
+  const prevArenaLon = prevWasHome ? previousGame.teamLon : previousGame.opponentLon;
+
+  if (isSameArena(prevArenaLat, prevArenaLon, currentArenaLat, currentArenaLon)) {
+    return 0;
+  }
+
+  if (prevWasHome && currentGameIsHome) {
+    return 0;
+  }
+
+  if (prevWasHome && !currentGameIsHome) {
+    return haversineDistance(teamHomeLat, teamHomeLon, currentArenaLat, currentArenaLon);
+  }
+
+  if (!prevWasHome && currentGameIsHome) {
+    return haversineDistance(prevArenaLat, prevArenaLon, teamHomeLat, teamHomeLon);
+  }
+
+  if (daysBetween >= 2) {
+    return (
+      haversineDistance(prevArenaLat, prevArenaLon, teamHomeLat, teamHomeLon) +
+      haversineDistance(teamHomeLat, teamHomeLon, currentArenaLat, currentArenaLon)
+    );
+  }
+
+  return haversineDistance(prevArenaLat, prevArenaLon, currentArenaLat, currentArenaLon);
+}
+
 // ─── Core Algorithm ─────────────────────────────────────────────
 
 /**
@@ -111,16 +184,22 @@ export interface FatigueResult {
  * @param gameDate - The date of the game we're calculating fatigue for
  * @param recentGames - The team's games within the lookback window,
  *                      sorted by date ascending (oldest first)
- * @param isVisitingAltitude - Is the current game at an altitude arena?
- * @param currentGameLat - Latitude of the current game's arena
- * @param currentGameLon - Longitude of the current game's arena
+ * @param isVisitingAltitude - Is the current game at an altitude arena (for this team)?
+ * @param teamHomeLat - This team's home arena latitude
+ * @param teamHomeLon - This team's home arena longitude
+ * @param currentVenueLat - Latitude where the upcoming game is played
+ * @param currentVenueLon - Longitude where the upcoming game is played
+ * @param currentGameIsHome - True if this team is the home team in the upcoming game
  */
 export function calculateFatigue(
   gameDate: string,
   recentGames: RecentGame[],
   isVisitingAltitude: boolean,
-  currentGameLat: number,
-  currentGameLon: number
+  teamHomeLat: number,
+  teamHomeLon: number,
+  currentVenueLat: number,
+  currentVenueLon: number,
+  currentGameIsHome: boolean
 ): FatigueResult {
   const targetDate = new Date(gameDate);
 
@@ -164,44 +243,53 @@ export function calculateFatigue(
     }
   }
 
+  const lastGame = recentGames[recentGames.length - 1];
+
   // ── 2. TRAVEL LOAD ──
-  // Sum all travel distances in the window, then apply log scaling.
-  // log scaling means: first 1000 miles = ~1.8 points,
-  //                    next 1000 miles  = ~1.1 more points (diminishing)
+  // Sum travel for each leg in the window (from assumed-at-home before the first game,
+  // then between consecutive games), then the leg into the upcoming game. See
+  // `travelMilesBetweenGames` for home/away and multi-day away-trip rules.
   let totalTravelMiles = 0;
 
-  for (let i = 0; i < recentGames.length; i++) {
-    // Where was this team playing this game?
-    const game = recentGames[i];
-    const arenaLat = game.isHome ? game.teamLat : game.opponentLat;
-    const arenaLon = game.isHome ? game.teamLon : game.opponentLon;
+  const first = recentGames[0];
+  const firstArenaLat = first.isHome ? first.teamLat : first.opponentLat;
+  const firstArenaLon = first.isHome ? first.teamLon : first.opponentLon;
+  totalTravelMiles += travelMilesBetweenGames(
+    null,
+    first.isHome,
+    firstArenaLat,
+    firstArenaLon,
+    teamHomeLat,
+    teamHomeLon,
+    0
+  );
 
-    let prevLat: number;
-    let prevLon: number;
-
-    if (i === 0) {
-      // First game in window — measure distance from team's home arena
-      prevLat = game.teamLat;
-      prevLon = game.teamLon;
-    } else {
-      // Distance from previous game's arena
-      const prev = recentGames[i - 1];
-      prevLat = prev.isHome ? prev.teamLat : prev.opponentLat;
-      prevLon = prev.isHome ? prev.teamLon : prev.opponentLon;
-    }
-
-    totalTravelMiles += haversineDistance(prevLat, prevLon, arenaLat, arenaLon);
+  for (let i = 1; i < recentGames.length; i++) {
+    const prev = recentGames[i - 1];
+    const cur = recentGames[i];
+    const gap = calendarDaysBetween(prev.date, cur.date);
+    const curArenaLat = cur.isHome ? cur.teamLat : cur.opponentLat;
+    const curArenaLon = cur.isHome ? cur.teamLon : cur.opponentLon;
+    totalTravelMiles += travelMilesBetweenGames(
+      prev,
+      cur.isHome,
+      curArenaLat,
+      curArenaLon,
+      teamHomeLat,
+      teamHomeLon,
+      gap
+    );
   }
 
-  // Also add travel TO the current game from the last game in window
-  const lastGame = recentGames[recentGames.length - 1];
-  const lastArenaLat = lastGame.isHome ? lastGame.teamLat : lastGame.opponentLat;
-  const lastArenaLon = lastGame.isHome ? lastGame.teamLon : lastGame.opponentLon;
-  totalTravelMiles += haversineDistance(
-    lastArenaLat,
-    lastArenaLon,
-    currentGameLat,
-    currentGameLon
+  const gapToCurrent = calendarDaysBetween(lastGame.date, gameDate);
+  totalTravelMiles += travelMilesBetweenGames(
+    lastGame,
+    currentGameIsHome,
+    currentVenueLat,
+    currentVenueLon,
+    teamHomeLat,
+    teamHomeLon,
+    gapToCurrent
   );
 
   // Logarithmic scaling: log(1 + miles/reference)
@@ -284,42 +372,6 @@ export function calculateFatigue(
     daysSinceLastGame,
     isOvertimePenalty: overtimeFatigueBonus > 0,
   };
-}
-
-// ─── Playoff multipliers ────────────────────────────────────────
-
-/** Extra multiplier applied to the fatigue score when the game is a playoff game. */
-export const PLAYOFF_MULTIPLIER = 1.2;
-
-/** Extra multiplier applied to the fatigue score when the game is an NBA Finals game. */
-export const FINALS_MULTIPLIER = 1.3;
-
-/**
- * Determine the season segment from a game's NBA API external ID and date.
- * - "004…" IDs are playoff games; games in June are Finals.
- * - All other IDs (e.g. "002…") are regular season.
- */
-export function getSeasonType(
-  externalId: string,
-  gameDate: string
-): "regular" | "playoffs" | "finals" {
-  if (!externalId.startsWith("004")) return "regular";
-  const month = parseInt(gameDate.slice(5, 7), 10);
-  return month >= 6 ? "finals" : "playoffs";
-}
-
-/**
- * Returns the fatigue multiplier for the given season segment.
- * Apply this to the computed fatigue score before storing.
- */
-export function getSeasonTypeMultiplier(
-  externalId: string,
-  gameDate: string
-): number {
-  const type = getSeasonType(externalId, gameDate);
-  if (type === "finals") return FINALS_MULTIPLIER;
-  if (type === "playoffs") return PLAYOFF_MULTIPLIER;
-  return 1.0;
 }
 
 /**

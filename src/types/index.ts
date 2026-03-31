@@ -28,6 +28,12 @@ export interface RestAdvantage {
   advantageTeam: "home" | "away" | "neutral";
 }
 
+/** One calendar day in a season with regular-season game count (API: GET /api/games/dates). */
+export interface GameDateCount {
+  date: string;
+  gameCount: number;
+}
+
 export interface GameResponse {
   id: number;
   externalId: string;
@@ -61,9 +67,9 @@ export interface AccuracyTier {
   accuracyPct: number;
 }
 
-export interface RollingAccuracyPoint {
-  /** "YYYY-MM-DD" */
-  date: string;
+export interface MonthlyAccuracyPoint {
+  /** "YYYY-MM" */
+  month: string;
   cumulativeGames: number;
   cumulativeCorrect: number;
   /** Accuracy percentage (0–100, 1 decimal). */
@@ -87,9 +93,9 @@ export interface AccuracyResponse {
   /** Overall accuracy percentage (0–100, 1 decimal). */
   accuracyPct: number;
   tiers: AccuracyTier[];
-  /** Last 30 distinct game dates with cumulative accuracy up to each date. Sorted oldest→newest. */
-  rolling30Days: RollingAccuracyPoint[];
-  /** Most recent 10 resolved predictions, newest first. */
+  /** Monthly cumulative accuracy, sorted oldest→newest. */
+  monthlyTrend: MonthlyAccuracyPoint[];
+  /** Most recent 20 resolved predictions, newest first. */
   recentPredictions: PredictionDetail[];
 }
 
@@ -130,23 +136,24 @@ export interface MonthlyTrend {
   winPct: number;
 }
 
-/** Stats for a specific season segment (or all games combined). */
-export interface SeasonTypeStats {
-  totalGames: number;
-  overallWins: number;
-  overallWinRate: number;
-  thresholds: ThresholdBucket[];
-  homeAwayBreakdown: HomeAwayBreakdown;
-  monthlyTrends: MonthlyTrend[];
-  /**
-   * Overall ATS record for the more-rested team.
-   * null when no games in this segment have spread data.
-   */
-  atsOverall: { covered: number; total: number; coverRate: number } | null;
+/** One bucket within the regular-season month axis (Oct–Apr). */
+export interface RegularSeasonMonthStat {
+  /** Short label: Oct, Nov, … Apr */
+  label: string;
+  games: number;
+  restedTeamWins: number;
+  winPct: number;
 }
 
+/** Win rate by month for a single NBA season. */
+export interface SeasonMonthlyWinRate {
+  season: string;
+  months: RegularSeasonMonthStat[];
+}
+
+/** Historical backtest stats (final games with fatigue data, |RA| >= 0.5). */
 export interface AnalysisResponse {
-  /** Total final games with fatigue data for both teams (|RA| >= 0.5). */
+  /** Total games counted (|RA| >= 0.5). */
   totalGames: number;
   overallWins: number;
   /** Win percentage (0–100, 1 decimal). */
@@ -155,11 +162,37 @@ export interface AnalysisResponse {
   homeAwayBreakdown: HomeAwayBreakdown;
   /** Sorted chronologically (ascending). */
   monthlyTrends: MonthlyTrend[];
+  /**
+   * Per-season monthly win rates on the Oct–Apr axis (same month label across years).
+   */
+  monthlyWinRateBySeason: SeasonMonthlyWinRate[];
+  /**
+   * Pooled across all seasons: wins/games for each Oct–Apr bucket (the “Average” line).
+   */
+  monthlyWinRatePooledByMonth: RegularSeasonMonthStat[];
   atsOverall: { covered: number; total: number; coverRate: number } | null;
-  /** Pre-computed stats for each season segment (for the tab toggle). */
-  seasonTypeBreakdown: {
-    regular: SeasonTypeStats;
-    /** Includes both conference finals and NBA Finals. */
-    playoffs: SeasonTypeStats;
-  };
+}
+
+// ─── Game search ─────────────────────────────────────────────────
+
+export interface GameSearchResult {
+  date: string;
+  season: string;
+  homeTeamAbbreviation: string;
+  awayTeamAbbreviation: string;
+  homeScore: number;
+  awayScore: number;
+  homeFatigueScore: number;
+  awayFatigueScore: number;
+  /** Absolute rest advantage differential (always >= 0). */
+  restAdvantageDifferential: number;
+  advantageTeam: "home" | "away";
+  restedTeamWon: boolean;
+}
+
+export interface GameSearchResponse {
+  games: GameSearchResult[];
+  total: number;
+  page: number;
+  limit: number;
 }

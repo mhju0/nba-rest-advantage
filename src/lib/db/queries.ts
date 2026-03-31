@@ -1,9 +1,14 @@
 import { format, parseISO, subDays } from "date-fns";
-import { and, count, eq, gte, isNotNull, lte, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "./index";
 import { fatigueScores, games, predictions, teams } from "./schema";
-import type { FatigueInfo, GameResponse, RestAdvantage } from "@/types";
+import {
+  intersectDateBounds,
+  monthCalendarBounds,
+  regularSeasonDateBounds,
+} from "@/lib/nba-season";
+import type { FatigueInfo, GameDateCount, GameResponse, RestAdvantage } from "@/types";
 
 const NEUTRAL_THRESHOLD = 0.5;
 
@@ -104,7 +109,7 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       awayFatigue,
       and(eq(awayFatigue.gameId, games.id), eq(awayFatigue.teamId, games.awayTeamId))
     )
-    .where(eq(games.date, date));
+    .where(and(eq(games.date, date), eq(games.gameType, "regular")));
 
   const teamIds = rows.flatMap((r) => [r.homeTeamId, r.awayTeamId]);
   const is4In6Map = await computeIs4In6Map(date, teamIds);
@@ -171,11 +176,51 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
   });
 }
 
+/**
+ * Returns each calendar date in the season (optionally filtered to one month)
+ * with a count of regular-season games on that date.
+ */
+export async function getRegularSeasonGameDatesWithCounts(
+  season: string,
+  month?: number
+): Promise<GameDateCount[]> {
+  const seasonBounds = regularSeasonDateBounds(season);
+  const window =
+    month === undefined
+      ? seasonBounds
+      : intersectDateBounds(seasonBounds, monthCalendarBounds(season, month));
+  if (!window) {
+    return [];
+  }
+
+  const rows = await db
+    .select({
+      date: games.date,
+      gameCount: sql<number>`cast(count(*) as integer)`,
+    })
+    .from(games)
+    .where(
+      and(
+        eq(games.season, season),
+        eq(games.gameType, "regular"),
+        gte(games.date, window.from),
+        lte(games.date, window.to)
+      )
+    )
+    .groupBy(games.date)
+    .orderBy(asc(games.date));
+
+  return rows.map((r) => ({
+    date: String(r.date),
+    gameCount: Number(r.gameCount),
+  }));
+}
+
 // ─── Analysis query ─────────────────────────────────────────────
 
 type CompletedGameRow = {
   date: string;
-  gameType: string;
+  season: string;
   homeScore: number | null;
   awayScore: number | null;
   spread: string | null;
@@ -194,7 +239,7 @@ export async function getCompletedGamesWithFatigue(): Promise<CompletedGameRow[]
   return db
     .select({
       date: games.date,
-      gameType: games.gameType,
+      season: games.season,
       homeScore: games.homeScore,
       awayScore: games.awayScore,
       spread: games.spread,
@@ -213,6 +258,7 @@ export async function getCompletedGamesWithFatigue(): Promise<CompletedGameRow[]
     .where(
       and(
         eq(games.status, "final"),
+        eq(games.gameType, "regular"),
         isNotNull(games.homeScore),
         isNotNull(games.awayScore)
       )
@@ -239,8 +285,8 @@ type ResolvedPredictionRow = {
 };
 
 /**
- * Returns all resolved predictions (actualWinnerId is set) joined with full
- * team details for both sides, sorted by game date then prediction creation time.
+ * Returns all resolved regular-season predictions (actualWinnerId is set) joined
+ * with full team details for both sides, sorted by game date then prediction creation time.
  */
 export async function getResolvedPredictions(): Promise<ResolvedPredictionRow[]> {
   const homeTeam = alias(teams, "ht");
@@ -271,12 +317,100 @@ export async function getResolvedPredictions(): Promise<ResolvedPredictionRow[]>
     .innerJoin(awayTeam, eq(games.awayTeamId, awayTeam.id))
     .innerJoin(predictedTeam, eq(predictions.predictedAdvantageTeamId, predictedTeam.id))
     .innerJoin(actualWinnerTeam, eq(predictions.actualWinnerId, actualWinnerTeam.id))
-    .where(isNotNull(predictions.actualWinnerId))
+    .where(
+      and(
+        isNotNull(predictions.actualWinnerId),
+        eq(games.gameType, "regular")
+      )
+    )
     .orderBy(games.date, predictions.createdAt);
 
   // The INNER JOIN on actualWinnerTeam ensures actualWinnerId is non-null,
   // but Drizzle can't narrow the type from a JOIN condition alone.
   return rows as ResolvedPredictionRow[];
+}
+
+// ─── Game search query ────────────────────────────────────────────
+
+type SearchFilters = {
+  minRA?: number;
+  team?: string;   // team abbreviation — either home or away
+  season?: string; // "YYYY-YY"
+};
+
+type SearchRow = {
+  date: string;
+  season: string;
+  homeTeamAbbr: string;
+  awayTeamAbbr: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  homeFatigueScore: string;
+  awayFatigueScore: string;
+};
+
+/**
+ * Returns final regular-season games matching the given filters, newest first.
+ * Result filtering (correct/incorrect) and pagination are done by the caller
+ * after computing restedTeamWon in JavaScript.
+ */
+export async function searchRegularSeasonGames(filters: SearchFilters): Promise<SearchRow[]> {
+  const homeTeam = alias(teams, "home_team");
+  const awayTeam = alias(teams, "away_team");
+  const homeFatigue = alias(fatigueScores, "home_fatigue");
+  const awayFatigue = alias(fatigueScores, "away_fatigue");
+
+  // Build conditions array — always filter to regular season final games
+  const conditions = [
+    eq(games.status, "final"),
+    eq(games.gameType, "regular"),
+    isNotNull(games.homeScore),
+    isNotNull(games.awayScore),
+  ];
+
+  if (filters.season) {
+    conditions.push(eq(games.season, filters.season));
+  }
+
+  if (filters.team) {
+    // TypeScript requires a non-nullable assertion; `or` can return undefined when given no args
+    const teamCond = or(
+      eq(homeTeam.abbreviation, filters.team),
+      eq(awayTeam.abbreviation, filters.team)
+    );
+    if (teamCond) conditions.push(teamCond);
+  }
+
+  if (filters.minRA && filters.minRA > 0) {
+    conditions.push(
+      sql`abs(cast(${awayFatigue.score} as numeric) - cast(${homeFatigue.score} as numeric)) >= ${filters.minRA}`
+    );
+  }
+
+  return db
+    .select({
+      date: games.date,
+      season: games.season,
+      homeTeamAbbr: homeTeam.abbreviation,
+      awayTeamAbbr: awayTeam.abbreviation,
+      homeScore: games.homeScore,
+      awayScore: games.awayScore,
+      homeFatigueScore: homeFatigue.score,
+      awayFatigueScore: awayFatigue.score,
+    })
+    .from(games)
+    .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
+    .innerJoin(awayTeam, eq(games.awayTeamId, awayTeam.id))
+    .innerJoin(
+      homeFatigue,
+      and(eq(homeFatigue.gameId, games.id), eq(homeFatigue.teamId, games.homeTeamId))
+    )
+    .innerJoin(
+      awayFatigue,
+      and(eq(awayFatigue.gameId, games.id), eq(awayFatigue.teamId, games.awayTeamId))
+    )
+    .where(and(...conditions))
+    .orderBy(desc(games.date));
 }
 
 // ─── Private helpers ─────────────────────────────────────────────
