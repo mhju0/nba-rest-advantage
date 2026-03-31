@@ -23,6 +23,12 @@ import psycopg2
 from dotenv import load_dotenv
 from nba_api.stats.endpoints import leaguegamefinder
 
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from nba_ot_periods import fetch_overtime_periods
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -118,6 +124,17 @@ def apply_score_updates(conn, df: pd.DataFrame) -> int:
                 (h_pts, a_pts, gid),
             )
             touched += cur.rowcount
+
+            if cur.rowcount > 0:
+                ot_periods = fetch_overtime_periods(gid)
+                cur.execute(
+                    """
+                    UPDATE games
+                    SET overtime_periods = %s
+                    WHERE external_id = %s
+                    """,
+                    (ot_periods, gid),
+                )
 
         conn.commit()
 

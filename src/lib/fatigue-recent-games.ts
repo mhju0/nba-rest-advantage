@@ -18,6 +18,7 @@ export interface PriorGameRow {
   awayLat: string;
   awayLon: string;
   awayAltitude: boolean;
+  overtimePeriods: number;
 }
 
 /**
@@ -44,6 +45,7 @@ export async function fetchRecentGamesForTeam(
       awayLat: awayTeamAlias.latitude,
       awayLon: awayTeamAlias.longitude,
       awayAltitude: awayTeamAlias.altitudeFlag,
+      overtimePeriods: games.overtimePeriods,
     })
     .from(games)
     .innerJoin(homeTeamAlias, eq(games.homeTeamId, homeTeamAlias.id))
@@ -73,6 +75,7 @@ export function rowToRecentGame(row: PriorGameRow, teamId: number): RecentGame {
       opponentLat: parseFloat(row.awayLat),
       opponentLon: parseFloat(row.awayLon),
       opponentAltitudeFlag: row.awayAltitude,
+      overtimePeriods: row.overtimePeriods,
     };
   }
   return {
@@ -85,5 +88,6 @@ export function rowToRecentGame(row: PriorGameRow, teamId: number): RecentGame {
     opponentLat: parseFloat(row.homeLat),
     opponentLon: parseFloat(row.homeLon),
     opponentAltitudeFlag: row.homeAltitude,
+    overtimePeriods: row.overtimePeriods,
   };
 }

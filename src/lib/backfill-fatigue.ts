@@ -1,6 +1,10 @@
 /**
  * Backfill fatigue_scores for all games in chronological order.
  * Run: npx tsx src/lib/backfill-fatigue.ts
+ *
+ * Skips rows that already exist. After algorithm changes (e.g. overtime load),
+ * truncate `fatigue_scores` or delete affected rows, ensure `games.overtime_periods`
+ * is populated, then re-run.
  */
 
 import { asc } from "drizzle-orm";
@@ -121,6 +125,7 @@ async function main(): Promise<void> {
             travelDistanceMiles: String(r.travelDistanceMiles),
             isBackToBack: r.isBackToBack,
             daysSinceLastGame: r.daysSinceLastGame,
+            isOvertimePenalty: r.isOvertimePenalty,
           });
           existingKeys.add(`${row.gameId}:${row.teamId}`);
         }

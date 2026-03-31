@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useState, type KeyboardEvent } from "react"
 import Image from "next/image"
+import { ChevronDown } from "lucide-react"
 import {
   Card,
-  CardAction,
   CardContent,
   CardHeader,
   CardTitle,
@@ -12,12 +12,18 @@ import {
 import { FatigueBar } from "@/components/fatigue-bar"
 import { NBA_TEAM_IDS } from "@/lib/nba-team-ids"
 import { cn } from "@/lib/utils"
-import type { GameResponse } from "@/types"
+import type { FatigueInfo, GameResponse } from "@/types"
 
 // ─── Constants ───────────────────────────────────────────────────
 
 /** Minimum |differential| to show advantage/disadvantage highlight. */
 const HIGHLIGHT_THRESHOLD = 1.0
+
+const detailGlass = {
+  background: "rgba(255, 255, 255, 0.42)",
+  backdropFilter: "blur(14px)",
+  WebkitBackdropFilter: "blur(14px)",
+} as const
 
 // ─── Team logo ───────────────────────────────────────────────────
 
@@ -27,7 +33,7 @@ function TeamLogo({ abbreviation }: { abbreviation: string }) {
 
   if (!nbaId || error) {
     return (
-      <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-500">
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 font-heading text-[10px] font-bold text-slate-500">
         {abbreviation}
       </div>
     )
@@ -39,7 +45,6 @@ function TeamLogo({ abbreviation }: { abbreviation: string }) {
       alt={`${abbreviation} logo`}
       width={40}
       height={40}
-      // unoptimized: SVGs don't benefit from Next.js image optimization
       unoptimized
       className="size-10 shrink-0"
       onError={() => setError(true)}
@@ -47,11 +52,11 @@ function TeamLogo({ abbreviation }: { abbreviation: string }) {
   )
 }
 
-// ─── Sub-components ──────────────────────────────────────────────
+// ─── Score display ───────────────────────────────────────────────
 
 function LiveIndicator() {
   return (
-    <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[#C9082A]">
+    <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[#C9082A]">
       <span className="relative flex size-1.5">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#C9082A] opacity-60" />
         <span className="relative inline-flex size-1.5 rounded-full bg-[#C9082A]" />
@@ -61,7 +66,7 @@ function LiveIndicator() {
   )
 }
 
-function LiveScore({
+function LiveScoreHero({
   homeScore,
   awayScore,
 }: {
@@ -69,14 +74,66 @@ function LiveScore({
   awayScore: number | null
 }) {
   if (awayScore === null || homeScore === null) return null
+  const awayLeading = awayScore > homeScore
+  const homeLeading = homeScore > awayScore
   return (
-    <span className="ml-1.5 tabular-nums text-xs font-semibold text-slate-700">
-      {awayScore} – {homeScore}
-    </span>
+    <div className="mb-2 flex items-baseline justify-center gap-3 font-heading tabular-nums">
+      <span
+        className={cn(
+          awayLeading ? "text-2xl font-bold text-[#17408B]" : "text-lg font-semibold text-slate-500"
+        )}
+      >
+        {awayScore}
+      </span>
+      <span className="text-base font-medium text-slate-300">–</span>
+      <span
+        className={cn(
+          homeLeading ? "text-2xl font-bold text-[#17408B]" : "text-lg font-semibold text-slate-500"
+        )}
+      >
+        {homeScore}
+      </span>
+    </div>
   )
 }
 
-function GameStatus({
+function FinalScoreHero({
+  homeScore,
+  awayScore,
+}: {
+  homeScore: number
+  awayScore: number
+}) {
+  const awayWon = awayScore > homeScore
+  const homeWon = homeScore > awayScore
+  const tie = awayScore === homeScore
+  return (
+    <div className="mb-3 flex flex-col gap-1.5">
+      <span className="text-center text-[10px] font-medium uppercase tracking-wider text-slate-400">
+        Final
+      </span>
+      <div className="flex items-baseline justify-center gap-4 font-heading tabular-nums">
+        <span
+          className={cn(
+            tie ? "text-3xl font-bold text-slate-800" : awayWon ? "text-4xl font-bold text-[#17408B]" : "text-2xl font-semibold text-slate-400"
+          )}
+        >
+          {awayScore}
+        </span>
+        <span className="text-xl font-medium text-slate-300">–</span>
+        <span
+          className={cn(
+            tie ? "text-3xl font-bold text-slate-800" : homeWon ? "text-4xl font-bold text-[#17408B]" : "text-2xl font-semibold text-slate-400"
+          )}
+        >
+          {homeScore}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function GameStatusRow({
   status,
   homeScore,
   awayScore,
@@ -87,54 +144,40 @@ function GameStatus({
 }) {
   if (status === "live") {
     return (
-      <span className="flex items-center">
+      <div className="flex flex-col items-center gap-1">
         <LiveIndicator />
-        <LiveScore homeScore={homeScore} awayScore={awayScore} />
-      </span>
+        <LiveScoreHero homeScore={homeScore} awayScore={awayScore} />
+      </div>
     )
   }
 
   if (status === "final" && awayScore !== null && homeScore !== null) {
-    const homeWon = homeScore > awayScore
+    return <FinalScoreHero homeScore={homeScore} awayScore={awayScore} />
+  }
+
+  if (status === "final") {
     return (
-      <span className="text-xs tracking-wide text-slate-400">
-        Final ·{" "}
-        <span className={cn("tabular-nums", !homeWon && "font-bold text-[#17408B]")}>
-          {awayScore}
-        </span>
-        {" – "}
-        <span className={cn("tabular-nums", homeWon && "font-bold text-[#17408B]")}>
-          {homeScore}
-        </span>
+      <span className="text-center text-xs font-medium uppercase tracking-wider text-slate-400">
+        Final
       </span>
     )
   }
 
-  if (status === "final") {
-    return <span className="text-xs uppercase tracking-wider text-slate-400">Final</span>
-  }
-
   return (
-    <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
+    <span className="text-center text-xs font-semibold uppercase tracking-wider text-slate-400">
       Upcoming
     </span>
   )
 }
 
-/** Small pill in NBA red — used when a team played yesterday. */
 function B2BBadge() {
   return (
-    <span className="inline-flex items-center rounded-full bg-[#C9082A] px-1.5 py-px text-[10px] font-bold uppercase leading-3 tracking-wide text-white">
+    <span className="inline-flex items-center rounded-full bg-[#C9082A] px-1.5 py-px font-heading text-[10px] font-bold uppercase leading-3 tracking-wide text-white">
       B2B
     </span>
   )
 }
 
-/**
- * Glowing pill badge showing the rest-advantage differential.
- * NBA blue for home advantage, NBA red for away advantage.
- * Neutral gray for even matchups.
- */
 function RaBadge({
   restAdvantage,
   homeAbbr,
@@ -166,7 +209,7 @@ function RaBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-3 py-0.5 text-xs font-bold text-white",
+        "inline-flex items-center rounded-full px-3 py-0.5 font-heading text-xs font-bold text-white",
         isHomeAdv ? "bg-[#17408B]" : "bg-[#C9082A]"
       )}
       style={{ boxShadow: `0 0 14px ${baseColor}40, 0 2px 6px ${baseColor}25` }}
@@ -176,10 +219,104 @@ function RaBadge({
   )
 }
 
-/**
- * A single team row: logo | abbreviation | B2B? | ... | fatigue score
- * with a fatigue bar below and an optional advantage/disadvantage highlight.
- */
+function PenaltyMark({ active }: { active: boolean }) {
+  return (
+    <span
+      className={cn(
+        "font-heading text-sm font-semibold tabular-nums",
+        active ? "text-red-600" : "text-emerald-600"
+      )}
+      aria-label={active ? "Yes" : "No"}
+    >
+      {active ? "✓" : "✗"}
+    </span>
+  )
+}
+
+function FatigueDetailColumn({
+  label,
+  fatigue,
+}: {
+  label: string
+  fatigue: FatigueInfo | null
+}) {
+  if (!fatigue) {
+    return (
+      <div className="rounded-xl border border-white/40 px-3 py-3 text-center text-xs text-slate-400">
+        No fatigue data
+      </div>
+    )
+  }
+
+  const travelHigh = fatigue.travelDistanceMiles >= 1000
+
+  return (
+    <div className="flex flex-col gap-2.5 rounded-xl border border-white/50 px-3 py-3">
+      <p className="border-b border-slate-200/60 pb-1.5 text-center font-heading text-[11px] font-bold uppercase tracking-wider text-slate-500">
+        {label}
+      </p>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">Schedule load</span>
+        <span className="font-heading font-semibold tabular-nums text-slate-800">
+          {fatigue.gamesInLast7Days} in 7d
+        </span>
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">Back-to-back</span>
+        <PenaltyMark active={fatigue.isBackToBack} />
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">3 in 4 nights</span>
+        <PenaltyMark active={fatigue.is3In4} />
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">4 in 6 nights</span>
+        <PenaltyMark active={fatigue.is4In6} />
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">Travel (miles)</span>
+        <span
+          className={cn(
+            "font-heading font-semibold tabular-nums",
+            travelHigh ? "text-red-600" : "text-slate-800"
+          )}
+        >
+          {Math.round(fatigue.travelDistanceMiles).toLocaleString()} mi
+        </span>
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">Altitude</span>
+        <div className="text-right">
+          <PenaltyMark active={fatigue.altitudePenalty} />
+          {fatigue.altitudeArenaLabel ? (
+            <p className="mt-0.5 max-w-[9rem] text-[10px] leading-tight text-slate-400">
+              {fatigue.altitudeArenaLabel}
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">Prior game OT</span>
+        <PenaltyMark active={fatigue.isOvertimePenalty} />
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">Days since last game</span>
+        <span className="font-heading font-semibold tabular-nums text-slate-800">
+          {fatigue.daysRest === null ? "—" : `${fatigue.daysRest}d`}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 function TeamRow({
   side,
   abbreviation,
@@ -209,10 +346,10 @@ function TeamRow({
           <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
             {side}
           </span>
-          <span className="text-sm font-bold text-slate-800">{abbreviation}</span>
+          <span className="font-heading text-sm font-bold text-slate-800">{abbreviation}</span>
           {isB2B && <B2BBadge />}
         </div>
-        <span className="ml-auto shrink-0 tabular-nums text-xs font-semibold text-slate-600">
+        <span className="ml-auto shrink-0 font-heading text-base font-semibold tabular-nums text-slate-700">
           {score !== null ? score.toFixed(1) : "—"}
         </span>
       </div>
@@ -230,14 +367,13 @@ function TeamRow({
 
 interface MatchupCardProps {
   game: GameResponse
-  /** Used for staggered fadeInUp animation delay. */
   index?: number
-  /** When true, the card briefly flashes to indicate a live score change. */
   isScoreFlashing?: boolean
 }
 
 export function MatchupCard({ game, index = 0, isScoreFlashing = false }: MatchupCardProps) {
-  // Determine row highlights: only show if |differential| >= threshold
+  const [expanded, setExpanded] = useState(false)
+
   const absDiff = Math.abs(game.restAdvantage?.differential ?? 0)
   const showHighlight = !!game.restAdvantage && absDiff >= HIGHLIGHT_THRESHOLD
   const advantageTeam = game.restAdvantage?.advantageTeam
@@ -254,15 +390,29 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
       : "disadvantage"
     : "neutral"
 
+  const toggle = useCallback(() => {
+    setExpanded((e) => !e)
+  }, [])
+
+  const onKeyDown = useCallback(
+    (ev: KeyboardEvent<HTMLDivElement>) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault()
+        toggle()
+      }
+    },
+    [toggle]
+  )
+
   return (
     <div
-      className="animate-[fadeInUp_0.4s_ease-out_forwards]"
+      className="animate-[fadeInUp_0.4s_ease-out_forwards] overflow-hidden rounded-2xl"
       style={{ animationDelay: `${index * 55}ms` }}
     >
       <Card
         className={cn(
           "ring-0 rounded-2xl border border-white/50",
-          "transition-all duration-300 ease-in-out hover:scale-[1.025]",
+          "transition-all duration-300 ease-in-out hover:scale-[1.02]",
           isScoreFlashing && "animate-[scoreFlash_0.5s_ease-out]"
         )}
         style={{
@@ -272,22 +422,40 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
           boxShadow: "0 8px 32px rgba(23, 64, 139, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04)",
         }}
       >
-        <CardHeader>
-          <CardTitle className="text-lg font-bold text-slate-900">
-            {game.awayTeam.abbreviation}
-            <span className="mx-1.5 font-normal text-slate-300">@</span>
-            {game.homeTeam.abbreviation}
-          </CardTitle>
-          <CardAction>
-            <GameStatus
+        <CardHeader className="gap-0 pb-2">
+          <div
+            role="button"
+            tabIndex={0}
+            aria-expanded={expanded}
+            aria-label={expanded ? "Collapse game details" : "Expand game details"}
+            onClick={toggle}
+            onKeyDown={onKeyDown}
+            className="cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-[#17408B]/35"
+          >
+            <GameStatusRow
               status={game.status}
               homeScore={game.homeScore}
               awayScore={game.awayScore}
             />
-          </CardAction>
+
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <CardTitle className="text-lg font-bold leading-tight text-slate-900">
+                <span className="font-heading font-bold">{game.awayTeam.abbreviation}</span>
+                <span className="mx-1.5 font-normal text-slate-300">@</span>
+                <span className="font-heading font-bold">{game.homeTeam.abbreviation}</span>
+              </CardTitle>
+              <ChevronDown
+                className={cn(
+                  "size-5 shrink-0 text-slate-400 transition-transform duration-300 ease-out",
+                  expanded && "rotate-180"
+                )}
+                aria-hidden
+              />
+            </div>
+          </div>
         </CardHeader>
 
-        <CardContent className="flex flex-col gap-3">
+        <CardContent className="flex flex-col gap-3 pt-0">
           <TeamRow
             side="AWAY"
             abbreviation={game.awayTeam.abbreviation}
@@ -313,6 +481,28 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
           />
         </CardContent>
       </Card>
+
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows] duration-300 ease-out",
+          expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        )}
+      >
+        <div className="overflow-hidden">
+          <div
+            className="mt-2 rounded-2xl border border-white/45 px-3 py-4 sm:px-4"
+            style={detailGlass}
+          >
+            <p className="mb-3 text-center font-heading text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              Fatigue breakdown
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <FatigueDetailColumn label={`Away · ${game.awayTeam.abbreviation}`} fatigue={game.awayFatigue} />
+              <FatigueDetailColumn label={`Home · ${game.homeTeam.abbreviation}`} fatigue={game.homeFatigue} />
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

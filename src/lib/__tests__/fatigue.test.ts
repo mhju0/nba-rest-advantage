@@ -28,6 +28,7 @@ function baseRecent(overrides: Partial<RecentGame> = {}): RecentGame {
     opponentLat: LA_LAT,
     opponentLon: LA_LON,
     opponentAltitudeFlag: false,
+    overtimePeriods: 0,
     ...overrides,
   };
 }
@@ -48,6 +49,8 @@ describe("calculateFatigue", () => {
     expect(result.gamesInLast7Days).toBe(0);
     expect(result.daysSinceLastGame).toBeNull();
     expect(result.freshnessBonus).toBe(0);
+    expect(result.overtimeFatigueBonus).toBe(0);
+    expect(result.isOvertimePenalty).toBe(false);
   });
 
   it("3+ days since last game applies freshness bonus (about −1 pt or lower)", () => {
@@ -182,6 +185,45 @@ describe("calculateFatigue", () => {
     expect(stacked.isBackToBack).toBe(true);
     expect(stacked.altitudeMultiplier).toBe(1.15);
     expect(stacked.score).toBeGreaterThan(flatNoB2b.score + 3);
+  });
+
+  it("adds +0.5 when the prior game went to one overtime", () => {
+    const noOt = calculateFatigue(
+      "2025-01-03",
+      [baseRecent({ date: "2025-01-02", overtimePeriods: 0 })],
+      false,
+      LA_LAT,
+      LA_LON
+    );
+    const oneOt = calculateFatigue(
+      "2025-01-03",
+      [baseRecent({ date: "2025-01-02", overtimePeriods: 1 })],
+      false,
+      LA_LAT,
+      LA_LON
+    );
+    expect(oneOt.overtimeFatigueBonus).toBe(0.5);
+    expect(oneOt.isOvertimePenalty).toBe(true);
+    expect(oneOt.score - noOt.score).toBeCloseTo(0.5, 5);
+  });
+
+  it("adds +1.0 when the prior game went to double overtime or more", () => {
+    const oneOt = calculateFatigue(
+      "2025-01-03",
+      [baseRecent({ date: "2025-01-02", overtimePeriods: 1 })],
+      false,
+      LA_LAT,
+      LA_LON
+    );
+    const twoOt = calculateFatigue(
+      "2025-01-03",
+      [baseRecent({ date: "2025-01-02", overtimePeriods: 2 })],
+      false,
+      LA_LAT,
+      LA_LON
+    );
+    expect(twoOt.overtimeFatigueBonus).toBe(1);
+    expect(twoOt.score - oneOt.score).toBeCloseTo(0.5, 5);
   });
 });
 

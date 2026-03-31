@@ -1,10 +1,49 @@
-import { and, eq, isNotNull } from "drizzle-orm";
+import { format, parseISO, subDays } from "date-fns";
+import { and, count, eq, gte, isNotNull, lte, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "./index";
 import { fatigueScores, games, predictions, teams } from "./schema";
 import type { FatigueInfo, GameResponse, RestAdvantage } from "@/types";
 
 const NEUTRAL_THRESHOLD = 0.5;
+
+/**
+ * Counts games a team plays between `startDate` and `endDate` inclusive (YYYY-MM-DD).
+ */
+async function countTeamGamesInDateRange(
+  teamId: number,
+  startDate: string,
+  endDate: string
+): Promise<number> {
+  const agg = await db
+    .select({ c: count() })
+    .from(games)
+    .where(
+      and(
+        gte(games.date, startDate),
+        lte(games.date, endDate),
+        or(eq(games.homeTeamId, teamId), eq(games.awayTeamId, teamId))
+      )
+    );
+  return Number(agg[0]?.c ?? 0);
+}
+
+/**
+ * True when the team is playing its 4th+ game in a 6-day window ending on `gameDate`.
+ */
+async function computeIs4In6Map(
+  gameDate: string,
+  teamIds: number[]
+): Promise<Map<number, boolean>> {
+  const start = format(subDays(parseISO(gameDate), 5), "yyyy-MM-dd");
+  const unique = [...new Set(teamIds)];
+  const out = new Map<number, boolean>();
+  for (const tid of unique) {
+    const n = await countTeamGamesInDateRange(tid, start, gameDate);
+    out.set(tid, n >= 4);
+  }
+  return out;
+}
 
 /**
  * Returns all games scheduled for a given date (YYYY-MM-DD), with full team
@@ -32,6 +71,7 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       homeTeamName: homeTeam.name,
       homeTeamAbbreviation: homeTeam.abbreviation,
       homeTeamCity: homeTeam.city,
+      homeTeamAltitude: homeTeam.altitudeFlag,
       // Away team
       awayTeamName: awayTeam.name,
       awayTeamAbbreviation: awayTeam.abbreviation,
@@ -43,6 +83,7 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       homeTravelDistanceMiles: homeFatigue.travelDistanceMiles,
       homeAltitudeMultiplier: homeFatigue.altitudeMultiplier,
       homeDaysSinceLastGame: homeFatigue.daysSinceLastGame,
+      homeIsOvertimePenalty: homeFatigue.isOvertimePenalty,
       // Away fatigue
       awayFatigueScore: awayFatigue.score,
       awayIsBackToBack: awayFatigue.isBackToBack,
@@ -50,6 +91,7 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       awayTravelDistanceMiles: awayFatigue.travelDistanceMiles,
       awayAltitudeMultiplier: awayFatigue.altitudeMultiplier,
       awayDaysSinceLastGame: awayFatigue.daysSinceLastGame,
+      awayIsOvertimePenalty: awayFatigue.isOvertimePenalty,
     })
     .from(games)
     .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
@@ -64,6 +106,9 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
     )
     .where(eq(games.date, date));
 
+  const teamIds = rows.flatMap((r) => [r.homeTeamId, r.awayTeamId]);
+  const is4In6Map = await computeIs4In6Map(date, teamIds);
+
   return rows.map((row) => {
     const homeFatigueData = buildFatigueInfo(
       row.homeFatigueScore,
@@ -71,7 +116,14 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       row.homeGamesInLast7Days,
       row.homeDaysSinceLastGame,
       row.homeTravelDistanceMiles,
-      row.homeAltitudeMultiplier
+      row.homeAltitudeMultiplier,
+      row.homeIsOvertimePenalty,
+      {
+        side: "home",
+        homeTeamCity: row.homeTeamCity,
+        homeAltitudeFlag: row.homeTeamAltitude,
+        is4In6: is4In6Map.get(row.homeTeamId) ?? false,
+      }
     );
 
     const awayFatigueData = buildFatigueInfo(
@@ -80,7 +132,14 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       row.awayGamesInLast7Days,
       row.awayDaysSinceLastGame,
       row.awayTravelDistanceMiles,
-      row.awayAltitudeMultiplier
+      row.awayAltitudeMultiplier,
+      row.awayIsOvertimePenalty,
+      {
+        side: "away",
+        homeTeamCity: row.homeTeamCity,
+        homeAltitudeFlag: row.homeTeamAltitude,
+        is4In6: is4In6Map.get(row.awayTeamId) ?? false,
+      }
     );
 
     const restAdvantage = buildRestAdvantage(homeFatigueData, awayFatigueData);
@@ -220,6 +279,13 @@ export async function getResolvedPredictions(): Promise<ResolvedPredictionRow[]>
 
 // ─── Private helpers ─────────────────────────────────────────────
 
+type FatigueInfoContext = {
+  side: "home" | "away";
+  homeTeamCity: string;
+  homeAltitudeFlag: boolean;
+  is4In6: boolean;
+};
+
 /** Builds a FatigueInfo object from raw DB columns, or returns null if no fatigue data exists. */
 function buildFatigueInfo(
   score: string | null,
@@ -227,7 +293,9 @@ function buildFatigueInfo(
   gamesInLast7Days: number | null,
   daysSinceLastGame: number | null,
   travelDistanceMiles: string | null,
-  altitudeMultiplier: string | null
+  altitudeMultiplier: string | null,
+  isOvertimePenalty: boolean | null,
+  ctx: FatigueInfoContext
 ): FatigueInfo | null {
   if (score === null) return null;
 
@@ -235,12 +303,23 @@ function buildFatigueInfo(
   const is3In4 =
     (gamesInLast7Days ?? 0) >= 3 && daysSinceLastGame !== null && daysSinceLastGame <= 2;
 
+  const altitudePenalty = parseFloat(altitudeMultiplier ?? "1") > 1.0;
+  const altitudeArenaLabel =
+    ctx.side === "away" && altitudePenalty && ctx.homeAltitudeFlag
+      ? `${ctx.homeTeamCity} (altitude)`
+      : null;
+
   return {
     score: parseFloat(score),
     isBackToBack: isBackToBack ?? false,
     is3In4,
     travelDistanceMiles: parseFloat(travelDistanceMiles ?? "0"),
-    altitudePenalty: parseFloat(altitudeMultiplier ?? "1") > 1.0,
+    altitudePenalty,
+    altitudeArenaLabel,
+    daysRest: daysSinceLastGame,
+    gamesInLast7Days: gamesInLast7Days ?? 0,
+    is4In6: ctx.is4In6,
+    isOvertimePenalty: isOvertimePenalty ?? false,
   };
 }
 

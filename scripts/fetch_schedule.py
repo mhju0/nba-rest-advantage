@@ -17,11 +17,20 @@ import psycopg2
 from dotenv import load_dotenv
 from nba_api.stats.endpoints import leaguegamefinder
 
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from nba_ot_periods import fetch_overtime_periods
+
 load_dotenv(Path(__file__).parent / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     sys.exit("ERROR: DATABASE_URL not set in scripts/.env")
+
+# Set NBA_SEED_SKIP_OT=1 to skip per-game BoxScore calls (faster seed; OT stays 0).
+SKIP_OT_SEED = os.environ.get("NBA_SEED_SKIP_OT", "").lower() in ("1", "true", "yes")
 
 SEASONS = ["2023-24", "2024-25"]
 SEASON_TYPES = ["Regular Season", "Playoffs"]
@@ -105,15 +114,19 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
         home_score = int(home["PTS"]) if pd.notna(home["PTS"]) else None
         away_score = int(away["PTS"]) if pd.notna(away["PTS"]) else None
 
+        gid_str = str(game_id)
+        ot_periods = 0 if SKIP_OT_SEED else fetch_overtime_periods(gid_str)
+
         records.append((
-            str(game_id),                   # external_id
-            home["GAME_DATE"],              # date
-            season,                         # season
-            team_map[home_abbr],            # home_team_id
-            team_map[away_abbr],            # away_team_id
-            home_score,                     # home_score
-            away_score,                     # away_score
-            "final",                        # status (historical seasons only)
+            gid_str,
+            home["GAME_DATE"],
+            season,
+            team_map[home_abbr],
+            team_map[away_abbr],
+            home_score,
+            away_score,
+            "final",
+            ot_periods,
         ))
 
     if skipped:
@@ -126,9 +139,10 @@ INSERT_SQL = """
 INSERT INTO games (
     external_id, date, season,
     home_team_id, away_team_id,
-    home_score, away_score, status
+    home_score, away_score, status,
+    overtime_periods
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (external_id) DO NOTHING;
 """
 
@@ -137,7 +151,11 @@ def main() -> None:
     conn = psycopg2.connect(DATABASE_URL)
     try:
         team_map = load_team_id_map(conn)
-        print(f"Loaded {len(team_map)} teams from DB.\n")
+        print(f"Loaded {len(team_map)} teams from DB.")
+        if SKIP_OT_SEED:
+            print("NBA_SEED_SKIP_OT is set — new rows get overtime_periods=0 (faster seed).\n")
+        else:
+            print("Fetching overtime via BoxScoreSummary (slow; set NBA_SEED_SKIP_OT=1 to skip).\n")
 
         total_inserted = 0
 

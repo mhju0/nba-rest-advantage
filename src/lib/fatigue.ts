@@ -63,6 +63,12 @@ const FRESHNESS_MAX_BONUS = -2.0;
 /** Days of rest where freshness bonus maxes out. */
 const FRESHNESS_PLATEAU_DAYS = 3;
 
+/** Extra fatigue when the team's most recent game went to overtime (one OT). */
+const OVERTIME_SINGLE_BONUS = 0.5;
+
+/** Extra fatigue when that game went to double overtime or beyond. */
+const OVERTIME_MULTI_BONUS = 1.0;
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface RecentGame {
@@ -75,6 +81,8 @@ export interface RecentGame {
   opponentLat: number;
   opponentLon: number;
   opponentAltitudeFlag: boolean;
+  /** Count of overtime periods in this game (0 = regulation). */
+  overtimePeriods: number;
 }
 
 export interface FatigueResult {
@@ -85,10 +93,14 @@ export interface FatigueResult {
   altitudeMultiplier: number;
   densityMultiplier: number;
   freshnessBonus: number;
+  /** Additive load from the prior game going to overtime (not multiplied). */
+  overtimeFatigueBonus: number;
   gamesInLast7Days: number;
   travelDistanceMiles: number;
   isBackToBack: boolean;
   daysSinceLastGame: number | null;
+  /** True when `overtimeFatigueBonus` > 0 (prior game had OT). */
+  isOvertimePenalty: boolean;
 }
 
 // ─── Core Algorithm ─────────────────────────────────────────────
@@ -122,10 +134,12 @@ export function calculateFatigue(
       altitudeMultiplier: 1.0,
       densityMultiplier: 1.0,
       freshnessBonus: 0,
+      overtimeFatigueBonus: 0,
       gamesInLast7Days: 0,
       travelDistanceMiles: 0,
       isBackToBack: false,
       daysSinceLastGame: null,
+      isOvertimePenalty: false,
     };
   }
 
@@ -237,11 +251,23 @@ export function calculateFatigue(
       (1 - Math.exp(-daysSinceLastGame / FRESHNESS_PLATEAU_DAYS));
   }
 
+  // ── 7. OVERTIME (prior game only) ──
+  const priorOtPeriods = Math.max(0, Math.floor(lastGame.overtimePeriods));
+  let overtimeFatigueBonus = 0;
+  if (priorOtPeriods >= 2) {
+    overtimeFatigueBonus = OVERTIME_MULTI_BONUS;
+  } else if (priorOtPeriods === 1) {
+    overtimeFatigueBonus = OVERTIME_SINGLE_BONUS;
+  }
+
   // ── FINAL SCORE ──
   const baseLoad = decayLoadScore + travelLoadScore;
   const multipliedLoad =
     baseLoad * b2bMultiplier * altMultiplier * densityMultiplier;
-  const finalScore = Math.max(0, multipliedLoad + freshnessBonus);
+  const finalScore = Math.max(
+    0,
+    multipliedLoad + freshnessBonus + overtimeFatigueBonus
+  );
 
   return {
     score: Math.round(finalScore * 100) / 100,
@@ -251,10 +277,12 @@ export function calculateFatigue(
     altitudeMultiplier: altMultiplier,
     densityMultiplier: Math.round(densityMultiplier * 100) / 100,
     freshnessBonus: Math.round(freshnessBonus * 100) / 100,
+    overtimeFatigueBonus: Math.round(overtimeFatigueBonus * 100) / 100,
     gamesInLast7Days: gamesInWindow,
     travelDistanceMiles: Math.round(totalTravelMiles),
     isBackToBack,
     daysSinceLastGame,
+    isOvertimePenalty: overtimeFatigueBonus > 0,
   };
 }
 

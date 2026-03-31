@@ -11,6 +11,16 @@ export interface FatigueInfo {
   is3In4: boolean;
   travelDistanceMiles: number;
   altitudePenalty: boolean;
+  /** When altitude applies (away at DEN/UTA), human-readable arena context. */
+  altitudeArenaLabel: string | null;
+  /** Days since this team's previous game; null = season opener / no prior game. */
+  daysRest: number | null;
+  /** Games this team played in the 7-day lookback (same window as the fatigue model). */
+  gamesInLast7Days: number;
+  /** Fourth game within a rolling 6-day window ending on this game date. */
+  is4In6: boolean;
+  /** Prior game went to overtime (extra fatigue in the model). */
+  isOvertimePenalty: boolean;
 }
 
 export interface RestAdvantage {

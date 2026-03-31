@@ -39,6 +39,8 @@ export const games = pgTable(
     awayScore: integer("away_score"),
     status: varchar("status").notNull().default("scheduled"),
     spread: decimal("spread"),
+    /** Overtime periods beyond regulation (1 = one OT, 2 = double OT, …). */
+    overtimePeriods: integer("overtime_periods").notNull().default(0),
   },
   (t) => [
     index("games_date_idx").on(t.date),
@@ -75,6 +77,8 @@ export const fatigueScores = pgTable(
     travelDistanceMiles: decimal("travel_distance_miles").notNull(),
     isBackToBack: boolean("is_back_to_back").notNull(),
     daysSinceLastGame: integer("days_since_last_game"),
+    /** True when the prior game included overtime (extra fatigue load). */
+    isOvertimePenalty: boolean("is_overtime_penalty").notNull().default(false),
 
     computedAt: timestamp("computed_at").notNull().defaultNow(),
   },

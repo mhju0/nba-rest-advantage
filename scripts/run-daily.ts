@@ -101,6 +101,7 @@ async function main(): Promise<void> {
         travelDistanceMiles: String(r.travelDistanceMiles),
         isBackToBack: r.isBackToBack,
         daysSinceLastGame: r.daysSinceLastGame,
+        isOvertimePenalty: r.isOvertimePenalty,
       });
       fatigueRows++;
     }
