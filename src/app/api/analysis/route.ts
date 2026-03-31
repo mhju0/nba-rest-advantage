@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getPublicApiErrorMessage } from "@/lib/api-errors";
 import { getCompletedGamesWithFatigue } from "@/lib/db/queries";
 import type {
   AnalysisResponse,
@@ -148,7 +149,13 @@ export async function GET(): Promise<NextResponse<ApiResponse<AnalysisResponse>>
 
     return NextResponse.json({ data: response, error: null });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ data: null as unknown as AnalysisResponse, error: message }, { status: 500 });
+    console.error("[api/analysis]", err);
+    return NextResponse.json(
+      {
+        data: null as unknown as AnalysisResponse,
+        error: getPublicApiErrorMessage(err),
+      },
+      { status: 500 }
+    );
   }
 }

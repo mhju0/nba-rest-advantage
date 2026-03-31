@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getPublicApiErrorMessage } from "@/lib/api-errors";
 import { getResolvedPredictions } from "@/lib/db/queries";
 import type {
   AccuracyResponse,
@@ -162,9 +163,12 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
 
     return NextResponse.json({ data: response, error: null });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal server error";
+    console.error("[api/analysis/accuracy]", err);
     return NextResponse.json(
-      { data: null as unknown as AccuracyResponse, error: message },
+      {
+        data: null as unknown as AccuracyResponse,
+        error: getPublicApiErrorMessage(err),
+      },
       { status: 500 }
     );
   }

@@ -3,122 +3,15 @@
  * Run: npx tsx src/lib/backfill-fatigue.ts
  */
 
-import { format, parseISO, subDays } from "date-fns";
-import { and, asc, eq, gte, lt, or } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { alias } from "drizzle-orm/pg-core";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import type * as Schema from "./db/schema";
-import { games, teams, fatigueScores } from "./db/schema";
-import {
-  calculateFatigue,
-  type FatigueResult,
-  type RecentGame,
-} from "./fatigue";
+import { fatigueScores, games, teams } from "./db/schema";
+import { calculateFatigue, type FatigueResult } from "./fatigue";
+import { fetchRecentGamesForTeam } from "./fatigue-recent-games";
+import { loadEnvLocal } from "./load-env-local";
 
 type AppDb = PostgresJsDatabase<typeof Schema>;
-
-/** Load `.env.local` when DATABASE_URL is unset (tsx does not load Next.js env). */
-function loadEnvLocal(): void {
-  if (process.env.DATABASE_URL) return;
-  const envPath = join(process.cwd(), ".env.local");
-  if (!existsSync(envPath)) return;
-  const raw = readFileSync(envPath, "utf8");
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    let val = trimmed.slice(eqIdx + 1).trim();
-    if (
-      (val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))
-    ) {
-      val = val.slice(1, -1);
-    }
-    if (process.env[key] === undefined) {
-      process.env[key] = val;
-    }
-  }
-}
-
-interface PriorGameRow {
-  date: string;
-  homeTeamId: number;
-  awayTeamId: number;
-  homeLat: string;
-  homeLon: string;
-  homeAltitude: boolean;
-  awayLat: string;
-  awayLon: string;
-  awayAltitude: boolean;
-}
-
-async function fetchRecentGamesForTeam(
-  db: AppDb,
-  teamId: number,
-  gameDateStr: string
-): Promise<RecentGame[]> {
-  const windowStart = format(subDays(parseISO(gameDateStr), 7), "yyyy-MM-dd");
-  const homeTeamAlias = alias(teams, "home_team");
-  const awayTeamAlias = alias(teams, "away_team");
-
-  const rows: PriorGameRow[] = await db
-    .select({
-      date: games.date,
-      homeTeamId: games.homeTeamId,
-      awayTeamId: games.awayTeamId,
-      homeLat: homeTeamAlias.latitude,
-      homeLon: homeTeamAlias.longitude,
-      homeAltitude: homeTeamAlias.altitudeFlag,
-      awayLat: awayTeamAlias.latitude,
-      awayLon: awayTeamAlias.longitude,
-      awayAltitude: awayTeamAlias.altitudeFlag,
-    })
-    .from(games)
-    .innerJoin(homeTeamAlias, eq(games.homeTeamId, homeTeamAlias.id))
-    .innerJoin(awayTeamAlias, eq(games.awayTeamId, awayTeamAlias.id))
-    .where(
-      and(
-        or(eq(games.homeTeamId, teamId), eq(games.awayTeamId, teamId)),
-        gte(games.date, windowStart),
-        lt(games.date, gameDateStr)
-      )
-    )
-    .orderBy(asc(games.date));
-
-  return rows.map((row) => rowToRecentGame(row, teamId));
-}
-
-function rowToRecentGame(row: PriorGameRow, teamId: number): RecentGame {
-  const isHome = row.homeTeamId === teamId;
-  if (isHome) {
-    return {
-      date: String(row.date),
-      teamId,
-      opponentTeamId: row.awayTeamId,
-      isHome: true,
-      teamLat: parseFloat(row.homeLat),
-      teamLon: parseFloat(row.homeLon),
-      opponentLat: parseFloat(row.awayLat),
-      opponentLon: parseFloat(row.awayLon),
-      opponentAltitudeFlag: row.awayAltitude,
-    };
-  }
-  return {
-    date: String(row.date),
-    teamId,
-    opponentTeamId: row.homeTeamId,
-    isHome: false,
-    teamLat: parseFloat(row.awayLat),
-    teamLon: parseFloat(row.awayLon),
-    opponentLat: parseFloat(row.homeLat),
-    opponentLon: parseFloat(row.homeLon),
-    opponentAltitudeFlag: row.homeAltitude,
-  };
-}
 
 async function main(): Promise<void> {
   loadEnvLocal();

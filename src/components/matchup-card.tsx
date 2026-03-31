@@ -1,3 +1,7 @@
+"use client"
+
+import { useState } from "react"
+import Image from "next/image"
 import {
   Card,
   CardAction,
@@ -6,8 +10,42 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { FatigueBar } from "@/components/fatigue-bar"
+import { NBA_TEAM_IDS } from "@/lib/nba-team-ids"
 import { cn } from "@/lib/utils"
 import type { GameResponse } from "@/types"
+
+// ─── Constants ───────────────────────────────────────────────────
+
+/** Minimum |differential| to show advantage/disadvantage highlight. */
+const HIGHLIGHT_THRESHOLD = 1.0
+
+// ─── Team logo ───────────────────────────────────────────────────
+
+function TeamLogo({ abbreviation }: { abbreviation: string }) {
+  const [error, setError] = useState(false)
+  const nbaId = NBA_TEAM_IDS[abbreviation]
+
+  if (!nbaId || error) {
+    return (
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-500">
+        {abbreviation}
+      </div>
+    )
+  }
+
+  return (
+    <Image
+      src={`https://cdn.nba.com/logos/nba/${nbaId}/global/L/logo.svg`}
+      alt={`${abbreviation} logo`}
+      width={40}
+      height={40}
+      // unoptimized: SVGs don't benefit from Next.js image optimization
+      unoptimized
+      className="size-10 shrink-0"
+      onError={() => setError(true)}
+    />
+  )
+}
 
 // ─── Sub-components ──────────────────────────────────────────────
 
@@ -23,6 +61,21 @@ function LiveIndicator() {
   )
 }
 
+function LiveScore({
+  homeScore,
+  awayScore,
+}: {
+  homeScore: number | null
+  awayScore: number | null
+}) {
+  if (awayScore === null || homeScore === null) return null
+  return (
+    <span className="ml-1.5 tabular-nums text-xs font-semibold text-slate-700">
+      {awayScore} – {homeScore}
+    </span>
+  )
+}
+
 function GameStatus({
   status,
   homeScore,
@@ -32,18 +85,25 @@ function GameStatus({
   homeScore: number | null
   awayScore: number | null
 }) {
-  if (status === "live") return <LiveIndicator />
+  if (status === "live") {
+    return (
+      <span className="flex items-center">
+        <LiveIndicator />
+        <LiveScore homeScore={homeScore} awayScore={awayScore} />
+      </span>
+    )
+  }
 
   if (status === "final" && awayScore !== null && homeScore !== null) {
     const homeWon = homeScore > awayScore
     return (
       <span className="text-xs tracking-wide text-slate-400">
         Final ·{" "}
-        <span className={cn("tabular-nums", !homeWon && "font-semibold text-[#17408B]")}>
+        <span className={cn("tabular-nums", !homeWon && "font-bold text-[#17408B]")}>
           {awayScore}
         </span>
         {" – "}
-        <span className={cn("tabular-nums", homeWon && "font-semibold text-[#17408B]")}>
+        <span className={cn("tabular-nums", homeWon && "font-bold text-[#17408B]")}>
           {homeScore}
         </span>
       </span>
@@ -51,9 +111,7 @@ function GameStatus({
   }
 
   if (status === "final") {
-    return (
-      <span className="text-xs uppercase tracking-wider text-slate-400">Final</span>
-    )
+    return <span className="text-xs uppercase tracking-wider text-slate-400">Final</span>
   }
 
   return (
@@ -75,6 +133,7 @@ function B2BBadge() {
 /**
  * Glowing pill badge showing the rest-advantage differential.
  * NBA blue for home advantage, NBA red for away advantage.
+ * Neutral gray for even matchups.
  */
 function RaBadge({
   restAdvantage,
@@ -86,16 +145,14 @@ function RaBadge({
   awayAbbr: string
 }) {
   if (!restAdvantage) {
-    return (
-      <span className="text-xs text-slate-300">No fatigue data yet</span>
-    )
+    return <span className="text-xs text-slate-300">No fatigue data yet</span>
   }
 
   const { differential, advantageTeam } = restAdvantage
 
   if (advantageTeam === "neutral") {
     return (
-      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-0.5 text-xs font-medium text-slate-500">
+      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-0.5 text-xs font-medium text-slate-400">
         Even Rest
       </span>
     )
@@ -104,48 +161,62 @@ function RaBadge({
   const abbr = advantageTeam === "home" ? homeAbbr : awayAbbr
   const diff = Math.abs(differential).toFixed(1)
   const isHomeAdv = advantageTeam === "home"
-
   const baseColor = isHomeAdv ? "#17408B" : "#C9082A"
-  const bgClass = isHomeAdv ? "bg-[#17408B]" : "bg-[#C9082A]"
 
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full px-3 py-0.5 text-xs font-bold text-white",
-        bgClass
+        isHomeAdv ? "bg-[#17408B]" : "bg-[#C9082A]"
       )}
-      style={{
-        boxShadow: `0 0 14px ${baseColor}40, 0 2px 6px ${baseColor}25`,
-      }}
+      style={{ boxShadow: `0 0 14px ${baseColor}40, 0 2px 6px ${baseColor}25` }}
     >
       {abbr} +{diff} RA
     </span>
   )
 }
 
+/**
+ * A single team row: logo | abbreviation | B2B? | ... | fatigue score
+ * with a fatigue bar below and an optional advantage/disadvantage highlight.
+ */
 function TeamRow({
   side,
   abbreviation,
   isB2B,
   score,
+  highlight,
 }: {
   side: "AWAY" | "HOME"
   abbreviation: string
   isB2B: boolean
   score: number | null
+  highlight: "advantage" | "disadvantage" | "neutral"
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5">
-        <span className="w-9 text-[10px] font-medium uppercase tracking-wider text-slate-400">
-          {side}
-        </span>
-        <span className="text-sm font-bold text-slate-800">{abbreviation}</span>
-        {isB2B && <B2BBadge />}
-        <span className="ml-auto tabular-nums text-xs font-semibold text-slate-600">
+    <div
+      className={cn(
+        "flex flex-col gap-1.5 rounded-lg px-2 py-1.5 -mx-2 transition-colors",
+        highlight === "advantage" &&
+          "border-l-[3px] border-emerald-400/70 bg-emerald-50/50 pl-2.5",
+        highlight === "disadvantage" &&
+          "border-l-[3px] border-red-300/60 bg-red-50/30 pl-2.5"
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <TeamLogo abbreviation={abbreviation} />
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
+            {side}
+          </span>
+          <span className="text-sm font-bold text-slate-800">{abbreviation}</span>
+          {isB2B && <B2BBadge />}
+        </div>
+        <span className="ml-auto shrink-0 tabular-nums text-xs font-semibold text-slate-600">
           {score !== null ? score.toFixed(1) : "—"}
         </span>
       </div>
+
       {score !== null ? (
         <FatigueBar score={score} />
       ) : (
@@ -161,27 +232,45 @@ interface MatchupCardProps {
   game: GameResponse
   /** Used for staggered fadeInUp animation delay. */
   index?: number
+  /** When true, the card briefly flashes to indicate a live score change. */
+  isScoreFlashing?: boolean
 }
 
-export function MatchupCard({ game, index = 0 }: MatchupCardProps) {
+export function MatchupCard({ game, index = 0, isScoreFlashing = false }: MatchupCardProps) {
+  // Determine row highlights: only show if |differential| >= threshold
+  const absDiff = Math.abs(game.restAdvantage?.differential ?? 0)
+  const showHighlight = !!game.restAdvantage && absDiff >= HIGHLIGHT_THRESHOLD
+  const advantageTeam = game.restAdvantage?.advantageTeam
+
+  const awayHighlight: "advantage" | "disadvantage" | "neutral" = showHighlight
+    ? advantageTeam === "away"
+      ? "advantage"
+      : "disadvantage"
+    : "neutral"
+
+  const homeHighlight: "advantage" | "disadvantage" | "neutral" = showHighlight
+    ? advantageTeam === "home"
+      ? "advantage"
+      : "disadvantage"
+    : "neutral"
+
   return (
     <div
-      className="animate-[fadeInUp_0.4s_ease-out_both]"
+      className="animate-[fadeInUp_0.4s_ease-out_forwards]"
       style={{ animationDelay: `${index * 55}ms` }}
     >
       <Card
         className={cn(
-          // Glass morphism
-          "ring-0 border border-white/50 bg-white/65 backdrop-blur-2xl",
-          // Elevated shadow with NBA blue tint
-          "shadow-[0_8px_32px_rgba(23,64,139,0.08),_0_2px_8px_rgba(0,0,0,0.04)]",
-          // Hover lift
-          "transition-all duration-300 ease-in-out",
-          "hover:scale-[1.025] hover:bg-white/75",
-          "hover:shadow-[0_16px_48px_rgba(23,64,139,0.13),_0_4px_16px_rgba(0,0,0,0.06)]",
-          // More rounded for the Apple-glass feel
-          "rounded-2xl"
+          "ring-0 rounded-2xl border border-white/50",
+          "transition-all duration-300 ease-in-out hover:scale-[1.025]",
+          isScoreFlashing && "animate-[scoreFlash_0.5s_ease-out]"
         )}
+        style={{
+          background: "rgba(255, 255, 255, 0.6)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          boxShadow: "0 8px 32px rgba(23, 64, 139, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04)",
+        }}
       >
         <CardHeader>
           <CardTitle className="text-lg font-bold text-slate-900">
@@ -204,6 +293,7 @@ export function MatchupCard({ game, index = 0 }: MatchupCardProps) {
             abbreviation={game.awayTeam.abbreviation}
             isB2B={game.awayFatigue?.isBackToBack ?? false}
             score={game.awayFatigue?.score ?? null}
+            highlight={awayHighlight}
           />
 
           <div className="flex items-center justify-center py-0.5">
@@ -219,6 +309,7 @@ export function MatchupCard({ game, index = 0 }: MatchupCardProps) {
             abbreviation={game.homeTeam.abbreviation}
             isB2B={game.homeFatigue?.isBackToBack ?? false}
             score={game.homeFatigue?.score ?? null}
+            highlight={homeHighlight}
           />
         </CardContent>
       </Card>

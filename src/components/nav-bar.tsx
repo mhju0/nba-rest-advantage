@@ -22,7 +22,14 @@ export function NavBar() {
   const [open, setOpen] = useState(false)
 
   return (
-    <header className="sticky top-0 z-50 border-b border-black/[0.06] bg-white/75 backdrop-blur-xl">
+    <header
+      className="sticky top-0 z-50 border-b border-black/[0.06]"
+      style={{
+        background: "rgba(255, 255, 255, 0.75)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
+      }}
+    >
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6">
 
         {/* Brand — "NBA" in NBA blue, "Rest Advantage" in charcoal */}
@@ -73,7 +80,12 @@ export function NavBar() {
       {/* Mobile menu */}
       {open && (
         <nav
-          className="flex flex-col gap-1 border-t border-black/[0.06] bg-white/90 px-4 py-3 backdrop-blur-xl md:hidden"
+          className="flex flex-col gap-1 border-t border-black/[0.06] px-4 py-3 md:hidden"
+          style={{
+            background: "rgba(255, 255, 255, 0.9)",
+            backdropFilter: "blur(16px)",
+            WebkitBackdropFilter: "blur(16px)",
+          }}
           aria-label="Mobile navigation"
         >
           {NAV_LINKS.map(({ href, label }) => (

@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { addDays, format, subDays } from "date-fns"
 import { Activity, ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { MatchupCard } from "@/components/matchup-card"
+import { useLiveGames } from "@/hooks/useLiveGames"
 import type { ApiResponse, GameResponse } from "@/types"
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -93,21 +94,49 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Real-time: subscribe to live game updates via Supabase Realtime
+  const gameIds = useMemo(() => games.map((g) => g.id), [games])
+  const { liveUpdates, recentlyUpdated } = useLiveGames(gameIds)
+
+  // Merge live updates into game data without a full refetch
+  const mergedGames = useMemo(() => {
+    if (Object.keys(liveUpdates).length === 0) return games
+    return games.map((game) => {
+      const update = liveUpdates[game.id]
+      if (!update) return game
+      return {
+        ...game,
+        homeScore: update.homeScore ?? game.homeScore,
+        awayScore: update.awayScore ?? game.awayScore,
+        status: update.status ?? game.status,
+      }
+    })
+  }, [games, liveUpdates])
+
   useEffect(() => {
+    const controller = new AbortController()
     const dateParam = toDateParam(selectedDate)
+
     setLoading(true)
     setError(null)
 
-    fetch(`/api/games/${dateParam}`)
+    console.log("[Games] fetching:", dateParam)
+
+    fetch(`/api/games/${dateParam}`, { signal: controller.signal })
       .then((res) => res.json() as Promise<ApiResponse<GameResponse[]>>)
       .then(({ data, error: apiError }) => {
+        console.log("[Games] response:", dateParam, "→", data.length, "games", apiError ? `| error: ${apiError}` : "")
         if (apiError) throw new Error(apiError)
         setGames(data)
       })
       .catch((err: unknown) => {
+        if (err instanceof Error && err.name === "AbortError") return
+        console.error("[Games] fetch error:", err)
         setError(err instanceof Error ? err.message : "Something went wrong")
       })
       .finally(() => setLoading(false))
+
+    return () => controller.abort()
   }, [selectedDate])
 
   const formattedDate = format(selectedDate, "EEEE, MMMM d, yyyy")
@@ -141,13 +170,15 @@ export default function HomePage() {
           <ChevronLeft />
         </Button>
 
-        {/* suppressHydrationWarning: server UTC date may differ from client local date */}
-        <span
-          className="min-w-56 text-center text-sm font-medium text-slate-700"
-          suppressHydrationWarning
-        >
-          {formattedDate}
-        </span>
+        {/* Native date input — lets users jump directly to any date */}
+        <input
+          type="date"
+          value={toDateParam(selectedDate)}
+          onChange={(e) => {
+            if (e.target.value) setSelectedDate(new Date(e.target.value + "T12:00:00"))
+          }}
+          className="min-w-44 rounded-lg border border-slate-200 bg-white/70 px-3 py-1.5 text-center text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#17408B]/30"
+        />
 
         <Button
           variant="outline"
@@ -164,12 +195,17 @@ export default function HomePage() {
         <ErrorState message={error} />
       ) : loading ? (
         <SkeletonGrid />
-      ) : games.length === 0 ? (
+      ) : mergedGames.length === 0 ? (
         <EmptyState label={shortLabel} />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {games.map((game, i) => (
-            <MatchupCard key={game.id} game={game} index={i} />
+          {mergedGames.map((game, i) => (
+            <MatchupCard
+              key={game.id}
+              game={game}
+              index={i}
+              isScoreFlashing={recentlyUpdated.has(game.id)}
+            />
           ))}
         </div>
       )}

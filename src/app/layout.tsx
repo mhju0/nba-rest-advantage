@@ -34,6 +34,20 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col text-foreground">
+        {/* Fixed animated gradient background — rendered via inline styles so it
+            is never overridden by CSS layers or OS dark mode media queries. */}
+        <div
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: -10,
+            background: "linear-gradient(135deg, #f5f0ff, #fff0f0, #f0f5ff, #fff5f0)",
+            backgroundSize: "400% 400%",
+            animation: "gradientShift 20s ease infinite",
+          }}
+        />
+
         <NavBar />
 
         <main className="flex-1">

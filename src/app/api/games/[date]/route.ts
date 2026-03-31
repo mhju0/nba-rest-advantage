@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { getPublicApiErrorMessage } from "@/lib/api-errors";
 import { getGamesByDate } from "@/lib/db/queries";
 import type { ApiResponse, GameResponse } from "@/types";
 
@@ -23,7 +24,10 @@ export async function GET(
     const games = await getGamesByDate(parsed.data);
     return NextResponse.json({ data: games, error: null });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ data: [], error: message }, { status: 500 });
+    console.error("[api/games]", err);
+    return NextResponse.json(
+      { data: [], error: getPublicApiErrorMessage(err) },
+      { status: 500 }
+    );
   }
 }

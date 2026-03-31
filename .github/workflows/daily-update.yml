@@ -1,0 +1,47 @@
+# Daily sync: finalize yesterday's scores, refresh today's fatigue + predictions.
+#
+# Secrets (required):
+#   DATABASE_URL — Supabase Postgres connection string (postgresql://...)
+#   Configure at: GitHub repo → Settings → Secrets and variables → Actions → New repository secret
+
+name: Daily NBA update
+
+on:
+  schedule:
+    # 21:00 UTC — after typical U.S. game nights; aligns with early morning KST.
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Run daily update
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/daily_update.py

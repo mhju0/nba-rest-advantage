@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Target } from "lucide-react";
+import { TrackerContent } from "@/components/tracker-content";
 
 export const metadata: Metadata = {
   title: "Prediction Tracker",
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
 export default function TrackerPage() {
   return (
     <div className="flex flex-col gap-8">
+      {/* Page header */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2 text-sm font-semibold text-[#17408B]">
           <Target className="size-4" />
@@ -22,9 +24,7 @@ export default function TrackerPage() {
         </p>
       </div>
 
-      <div className="flex items-center justify-center rounded-3xl border border-white/50 bg-white/60 px-6 py-20 text-center shadow-[0_8px_32px_rgba(23,64,139,0.06)] backdrop-blur-2xl">
-        <p className="text-sm text-slate-400">Prediction history coming soon.</p>
-      </div>
+      <TrackerContent />
     </div>
   );
 }
