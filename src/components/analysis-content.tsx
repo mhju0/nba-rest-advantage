@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   BarChart,
   Bar,
@@ -13,11 +13,12 @@ import {
   LabelList,
   LineChart,
   Line,
+  Legend,
 } from "recharts"
 import type { TooltipContentProps } from "recharts"
 import { format, parse } from "date-fns"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { ApiResponse, AnalysisResponse } from "@/types"
+import type { AnalysisResponse, ApiResponse, SeasonTypeStats } from "@/types"
 
 // ─── Shared styles ────────────────────────────────────────────────
 
@@ -31,13 +32,12 @@ const glass = {
 // ─── Helpers ──────────────────────────────────────────────────────
 
 function fmtMonth(ym: string): string {
-  // "2024-03" → "Mar '24"
   return format(parse(ym, "yyyy-MM", new Date()), "MMM ''yy")
 }
 
 // ─── Chart datum shapes ───────────────────────────────────────────
 
-type WinRateDatum = { label: string; winPct: number; games: number }
+type WinRateDatum = { label: string; winPct: number; games: number; spreadCoverRate?: number | null }
 
 // ─── Custom tooltips ──────────────────────────────────────────────
 
@@ -50,12 +50,55 @@ function WinRateTooltip({ active, payload }: TooltipContentProps) {
       style={{ background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)" }}
     >
       <p className="font-semibold text-slate-800">{d.label}</p>
-      <p className="mt-0.5 text-[#17408B]">
-        Win rate: <span className="font-bold">{d.winPct}%</span>
-      </p>
+      {payload.map((p) => (
+        <p key={p.dataKey as string} className="mt-0.5" style={{ color: p.color }}>
+          {p.dataKey === "spreadCoverRate" ? "ATS cover rate" : "Win rate"}:{" "}
+          <span className="font-bold">{typeof p.value === "number" ? p.value : "--"}%</span>
+        </p>
+      ))}
       <p className="text-slate-500">{d.games.toLocaleString()} games</p>
     </div>
   )
+}
+
+function MonthlyTooltip({ active, payload }: TooltipContentProps) {
+  if (!active || !payload?.length) return null
+  const d = payload[0].payload as WinRateDatum
+  const isSmall = d.games < 10
+  return (
+    <div
+      className="rounded-xl border border-white/60 px-3 py-2 text-xs shadow-lg"
+      style={{ background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)" }}
+    >
+      <p className="font-semibold text-slate-800">{d.label}</p>
+      <p className="mt-0.5 text-[#17408B]">
+        Win rate: <span className="font-bold">{d.winPct}%</span>
+      </p>
+      <p className="text-slate-500">
+        {d.games.toLocaleString()} games{isSmall ? " (small sample)" : ""}
+      </p>
+    </div>
+  )
+}
+
+// ─── Custom dot for monthly chart (small-sample months get hollow dots) ──
+
+function MonthlyDot(props: Record<string, unknown>) {
+  const { cx, cy, payload } = props as { cx: number; cy: number; payload: WinRateDatum }
+  if ((payload.games ?? 10) < 10) {
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={4}
+        fill="white"
+        stroke="#17408B"
+        strokeWidth={1.5}
+        strokeDasharray="2 2"
+      />
+    )
+  }
+  return <circle cx={cx} cy={cy} r={3} fill="#17408B" strokeWidth={0} />
 }
 
 // ─── Skeleton ─────────────────────────────────────────────────────
@@ -63,6 +106,10 @@ function WinRateTooltip({ active, payload }: TooltipContentProps) {
 function AnalysisSkeleton() {
   return (
     <div className="flex flex-col gap-6">
+      {/* Tab bar */}
+      <div className="flex justify-center">
+        <Skeleton className="h-9 w-72 rounded-full bg-slate-200/80" />
+      </div>
       {/* Hero */}
       <div className="rounded-3xl border border-white/50 px-6 py-10" style={glass}>
         <div className="flex flex-col items-center gap-3">
@@ -98,12 +145,60 @@ function AnalysisSkeleton() {
   )
 }
 
+// ─── Tab pill ─────────────────────────────────────────────────────
+
+type SeasonFilter = "all" | "regular" | "playoffs"
+
+const TAB_LABELS: Record<SeasonFilter, string> = {
+  all: "All Games",
+  regular: "Regular Season",
+  playoffs: "Playoffs",
+}
+
+function SeasonTabs({
+  value,
+  onChange,
+}: {
+  value: SeasonFilter
+  onChange: (v: SeasonFilter) => void
+}) {
+  return (
+    <div className="flex justify-center">
+      <div
+        className="flex gap-1 rounded-full border border-white/60 p-1"
+        style={{
+          background: "rgba(255,255,255,0.55)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          boxShadow: "0 2px 12px rgba(23,64,139,0.07)",
+        }}
+      >
+        {(["all", "regular", "playoffs"] as SeasonFilter[]).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => onChange(tab)}
+            className={[
+              "rounded-full px-4 py-1.5 text-xs font-semibold transition-all duration-150",
+              value === tab
+                ? "bg-[#17408B] text-white shadow-sm"
+                : "text-slate-600 hover:text-slate-900",
+            ].join(" ")}
+          >
+            {TAB_LABELS[tab]}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────
 
 export function AnalysisContent() {
   const [data, setData] = useState<AnalysisResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [seasonFilter, setSeasonFilter] = useState<SeasonFilter>("all")
 
   useEffect(() => {
     fetch("/api/analysis")
@@ -118,9 +213,26 @@ export function AnalysisContent() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Derive the "view" data based on selected season filter
+  const viewData = useMemo((): SeasonTypeStats | null => {
+    if (!data) return null
+    if (seasonFilter === "all") {
+      return {
+        totalGames: data.totalGames,
+        overallWins: data.overallWins,
+        overallWinRate: data.overallWinRate,
+        thresholds: data.thresholds,
+        homeAwayBreakdown: data.homeAwayBreakdown,
+        monthlyTrends: data.monthlyTrends,
+        atsOverall: data.atsOverall,
+      }
+    }
+    return data.seasonTypeBreakdown[seasonFilter]
+  }, [data, seasonFilter])
+
   if (loading) return <AnalysisSkeleton />
 
-  if (error || !data) {
+  if (error || !data || !viewData) {
     return (
       <div
         className="rounded-3xl border border-[#C9082A]/20 px-6 py-12 text-center"
@@ -134,27 +246,35 @@ export function AnalysisContent() {
 
   // ── Shape data for charts ────────────────────────────────────────
 
-  const barData: WinRateDatum[] = data.thresholds.map((t) => ({
+  const barData: WinRateDatum[] = viewData.thresholds.map((t) => ({
     label: `RA ≥ ${t.threshold}`,
     winPct: t.winPct,
     games: t.games,
+    spreadCoverRate: t.spreadCoverRate,
   }))
 
-  const lineData: WinRateDatum[] = data.monthlyTrends.map((t) => ({
+  const lineData: WinRateDatum[] = viewData.monthlyTrends.map((t) => ({
     label: fmtMonth(t.month),
     winPct: t.winPct,
     games: t.games,
   }))
 
-  const ra5 = data.thresholds.find((t) => t.threshold === 5)
-  const ra7 = data.thresholds.find((t) => t.threshold === 7)
+  const ra5 = viewData.thresholds.find((t) => t.threshold === 5)
+  const ra7 = viewData.thresholds.find((t) => t.threshold === 7)
+  const hasSpreadData = viewData.thresholds.some((t) => t.spreadCoverRate !== null)
 
-  const tooltipRenderer = (props: TooltipContentProps) => (
+  const winRateTooltipRenderer = (props: TooltipContentProps) => (
     <WinRateTooltip {...props} />
+  )
+  const monthlyTooltipRenderer = (props: TooltipContentProps) => (
+    <MonthlyTooltip {...props} />
   )
 
   return (
     <div className="flex flex-col gap-6">
+
+      {/* ── Season type tab toggle ────────────────────────────────── */}
+      <SeasonTabs value={seasonFilter} onChange={setSeasonFilter} />
 
       {/* ── 1. Hero stat ──────────────────────────────────────────── */}
       <div
@@ -162,13 +282,18 @@ export function AnalysisContent() {
         style={glass}
       >
         <p className="text-7xl font-black tracking-tight text-[#17408B]">
-          {data.overallWinRate}%
+          {viewData.overallWinRate}%
         </p>
         <p className="mt-2 text-base font-semibold text-slate-700">
           More-rested team win rate
+          {seasonFilter !== "all" && (
+            <span className="ml-1.5 text-sm font-normal text-slate-400">
+              ({TAB_LABELS[seasonFilter]})
+            </span>
+          )}
         </p>
         <p className="mt-1 text-sm text-slate-400">
-          Across {data.totalGames.toLocaleString()} games analyzed
+          Across {viewData.totalGames.toLocaleString()} games analyzed
         </p>
       </div>
 
@@ -179,6 +304,7 @@ export function AnalysisContent() {
         </p>
         <p className="mt-0.5 text-xs text-slate-400">
           Higher rest advantage differential = stronger predictive signal
+          {hasSpreadData && " · Blue = win rate, green = ATS cover rate"}
         </p>
 
         <div className="mt-6 h-72">
@@ -188,6 +314,10 @@ export function AnalysisContent() {
                 <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#17408B" stopOpacity={1} />
                   <stop offset="100%" stopColor="#17408B" stopOpacity={0.6} />
+                </linearGradient>
+                <linearGradient id="spreadGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#059669" stopOpacity={1} />
+                  <stop offset="100%" stopColor="#059669" stopOpacity={0.6} />
                 </linearGradient>
               </defs>
               <CartesianGrid
@@ -211,7 +341,7 @@ export function AnalysisContent() {
               />
               <Tooltip
                 cursor={{ fill: "rgba(23,64,139,0.04)" }}
-                content={tooltipRenderer}
+                content={winRateTooltipRenderer}
               />
               <ReferenceLine
                 y={50}
@@ -226,7 +356,7 @@ export function AnalysisContent() {
                   opacity: 0.7,
                 }}
               />
-              <Bar dataKey="winPct" fill="url(#barGrad)" radius={[6, 6, 0, 0]} maxBarSize={72}>
+              <Bar dataKey="winPct" fill="url(#barGrad)" radius={[6, 6, 0, 0]} maxBarSize={hasSpreadData ? 48 : 72}>
                 <LabelList
                   dataKey="games"
                   position="top"
@@ -236,6 +366,19 @@ export function AnalysisContent() {
                   style={{ fontSize: "10px", fill: "#94a3b8" }}
                 />
               </Bar>
+              {hasSpreadData && (
+                <Bar dataKey="spreadCoverRate" fill="url(#spreadGrad)" radius={[6, 6, 0, 0]} maxBarSize={48} />
+              )}
+              {hasSpreadData && (
+                <Legend
+                  formatter={(value) =>
+                    value === "winPct" ? "Win Rate" : "ATS Cover Rate"
+                  }
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: "11px", color: "#64748b" }}
+                />
+              )}
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -249,16 +392,16 @@ export function AnalysisContent() {
             Home Team More Rested
           </p>
           <p className="mt-3 text-5xl font-black tracking-tight text-slate-900">
-            {data.homeAwayBreakdown.homeTeamMoreRested.winPct}%
+            {viewData.homeAwayBreakdown.homeTeamMoreRested.winPct}%
           </p>
           <p className="mt-1.5 text-sm text-slate-500">
-            {data.homeAwayBreakdown.homeTeamMoreRested.restedTeamWins.toLocaleString()} wins /{" "}
-            {data.homeAwayBreakdown.homeTeamMoreRested.games.toLocaleString()} games
+            {viewData.homeAwayBreakdown.homeTeamMoreRested.restedTeamWins.toLocaleString()} wins /{" "}
+            {viewData.homeAwayBreakdown.homeTeamMoreRested.games.toLocaleString()} games
           </p>
           <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
               className="h-full rounded-full bg-[#17408B] transition-all duration-700"
-              style={{ width: `${data.homeAwayBreakdown.homeTeamMoreRested.winPct}%` }}
+              style={{ width: `${viewData.homeAwayBreakdown.homeTeamMoreRested.winPct}%` }}
             />
           </div>
         </div>
@@ -269,16 +412,16 @@ export function AnalysisContent() {
             Away Team More Rested
           </p>
           <p className="mt-3 text-5xl font-black tracking-tight text-slate-900">
-            {data.homeAwayBreakdown.awayTeamMoreRested.winPct}%
+            {viewData.homeAwayBreakdown.awayTeamMoreRested.winPct}%
           </p>
           <p className="mt-1.5 text-sm text-slate-500">
-            {data.homeAwayBreakdown.awayTeamMoreRested.restedTeamWins.toLocaleString()} wins /{" "}
-            {data.homeAwayBreakdown.awayTeamMoreRested.games.toLocaleString()} games
+            {viewData.homeAwayBreakdown.awayTeamMoreRested.restedTeamWins.toLocaleString()} wins /{" "}
+            {viewData.homeAwayBreakdown.awayTeamMoreRested.games.toLocaleString()} games
           </p>
           <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
               className="h-full rounded-full bg-[#C9082A] transition-all duration-700"
-              style={{ width: `${data.homeAwayBreakdown.awayTeamMoreRested.winPct}%` }}
+              style={{ width: `${viewData.homeAwayBreakdown.awayTeamMoreRested.winPct}%` }}
             />
           </div>
         </div>
@@ -288,7 +431,12 @@ export function AnalysisContent() {
       <div className="rounded-3xl border border-white/50 p-6" style={glass}>
         <p className="text-sm font-semibold text-slate-800">Monthly Win Rate Trend</p>
         <p className="mt-0.5 text-xs text-slate-400">
-          Win rate of the more-rested team, month by month across both seasons
+          Win rate of the more-rested team, month by month
+          {seasonFilter === "all" && " across all seasons"}
+          {seasonFilter === "regular" && " · Regular season only"}
+          {seasonFilter === "playoffs" && " · Postseason only"}
+          {" · "}
+          <span className="italic">Hollow dots = &lt;10 games (small sample)</span>
         </p>
 
         <div className="mt-6 h-72">
@@ -312,7 +460,7 @@ export function AnalysisContent() {
               />
               <Tooltip
                 cursor={{ stroke: "rgba(23,64,139,0.15)", strokeWidth: 1 }}
-                content={tooltipRenderer}
+                content={monthlyTooltipRenderer}
               />
               <ReferenceLine
                 y={50}
@@ -332,7 +480,7 @@ export function AnalysisContent() {
                 dataKey="winPct"
                 stroke="#17408B"
                 strokeWidth={2.5}
-                dot={{ fill: "#17408B", r: 3, strokeWidth: 0 }}
+                dot={MonthlyDot}
                 activeDot={{ r: 5, fill: "#17408B", strokeWidth: 2, stroke: "rgba(23,64,139,0.2)" }}
               />
             </LineChart>
@@ -351,7 +499,7 @@ export function AnalysisContent() {
           }}
         >
           <p className="text-[11px] font-bold uppercase tracking-widest text-[#17408B]/70">
-            Key Insight
+            Key Insight{seasonFilter !== "all" ? ` · ${TAB_LABELS[seasonFilter]}` : ""}
           </p>
           <p className="mt-2 text-sm leading-relaxed text-slate-700">
             Teams with a Rest Advantage of{" "}
@@ -366,7 +514,96 @@ export function AnalysisContent() {
                 {ra7.games} games, suggesting the fatigue signal compounds at the extremes.
               </>
             )}
+            {seasonFilter === "playoffs" && (
+              <>{" "}Rest advantage is especially impactful in the postseason, where every edge matters.</>
+            )}
           </p>
+        </div>
+      )}
+
+      {/* ── 6. Season type breakdown (All Games view only) ────────── */}
+      {seasonFilter === "all" && (
+        <div className="rounded-3xl border border-white/50 p-6" style={glass}>
+          <p className="text-sm font-semibold text-slate-800">Regular Season vs. Playoffs</p>
+          <p className="mt-0.5 text-xs text-slate-400">
+            Rest advantage win rate broken down by season segment
+          </p>
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {(["regular", "playoffs"] as const).map((type) => {
+              const stats = data.seasonTypeBreakdown[type]
+              const label = type === "regular" ? "Regular Season" : "Playoffs & Finals"
+              const color = type === "regular" ? "#17408B" : "#C9082A"
+              return (
+                <div key={type} className="flex flex-col gap-1">
+                  <p className="text-xs font-semibold uppercase tracking-wider" style={{ color }}>
+                    {label}
+                  </p>
+                  <p className="text-4xl font-black tracking-tight text-slate-900">
+                    {stats.overallWinRate}%
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {stats.overallWins.toLocaleString()} wins / {stats.totalGames.toLocaleString()} games
+                  </p>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full transition-all duration-700"
+                      style={{ width: `${stats.overallWinRate}%`, background: color }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── 7. ATS Performance (shown when spread data exists) ───── */}
+      {viewData.atsOverall && (
+        <div className="rounded-3xl border border-white/50 p-6" style={glass}>
+          <p className="text-sm font-semibold text-slate-800">ATS Performance</p>
+          <p className="mt-0.5 text-xs text-slate-400">
+            How often the more-rested team covers the spread
+          </p>
+
+          {/* Overall ATS record */}
+          <div className="mt-5 flex items-end gap-3">
+            <p className="text-5xl font-black tracking-tight text-[#059669]">
+              {viewData.atsOverall.coverRate}%
+            </p>
+            <p className="mb-1 text-sm text-slate-500">
+              ATS cover rate ·{" "}
+              {viewData.atsOverall.covered}/{viewData.atsOverall.total} games
+            </p>
+          </div>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-[#059669] transition-all duration-700"
+              style={{ width: `${viewData.atsOverall.coverRate}%` }}
+            />
+          </div>
+
+          {/* Per-threshold ATS */}
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {viewData.thresholds
+              .filter((t) => t.spreadCoverRate !== null)
+              .map((t) => (
+                <div
+                  key={t.threshold}
+                  className="rounded-2xl border border-white/60 px-3 py-3 text-center"
+                  style={{ background: "rgba(255,255,255,0.4)" }}
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    RA ≥ {t.threshold}
+                  </p>
+                  <p className="mt-1 text-2xl font-black text-[#059669]">
+                    {t.spreadCoverRate}%
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-slate-400">
+                    {t.games.toLocaleString()} games
+                  </p>
+                </div>
+              ))}
+          </div>
         </div>
       )}
 

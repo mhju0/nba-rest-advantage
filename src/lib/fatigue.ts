@@ -286,6 +286,42 @@ export function calculateFatigue(
   };
 }
 
+// ─── Playoff multipliers ────────────────────────────────────────
+
+/** Extra multiplier applied to the fatigue score when the game is a playoff game. */
+export const PLAYOFF_MULTIPLIER = 1.2;
+
+/** Extra multiplier applied to the fatigue score when the game is an NBA Finals game. */
+export const FINALS_MULTIPLIER = 1.3;
+
+/**
+ * Determine the season segment from a game's NBA API external ID and date.
+ * - "004…" IDs are playoff games; games in June are Finals.
+ * - All other IDs (e.g. "002…") are regular season.
+ */
+export function getSeasonType(
+  externalId: string,
+  gameDate: string
+): "regular" | "playoffs" | "finals" {
+  if (!externalId.startsWith("004")) return "regular";
+  const month = parseInt(gameDate.slice(5, 7), 10);
+  return month >= 6 ? "finals" : "playoffs";
+}
+
+/**
+ * Returns the fatigue multiplier for the given season segment.
+ * Apply this to the computed fatigue score before storing.
+ */
+export function getSeasonTypeMultiplier(
+  externalId: string,
+  gameDate: string
+): number {
+  const type = getSeasonType(externalId, gameDate);
+  if (type === "finals") return FINALS_MULTIPLIER;
+  if (type === "playoffs") return PLAYOFF_MULTIPLIER;
+  return 1.0;
+}
+
 /**
  * Calculate the Rest Advantage for a matchup.
  * Positive = home team is more rested (advantage).

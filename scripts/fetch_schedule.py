@@ -1,10 +1,20 @@
-"""Fetch NBA game schedules for 2023-24 and 2024-25 seasons and insert into games table.
+"""Fetch NBA game schedules and insert into games table.
 
+Covers nine seasons from 2015-16 through 2024-25, excluding 2019-20 (see below).
 Each game appears twice in LeagueGameFinder (one row per team). We pair rows by
 GAME_ID, using MATCHUP ("vs." = home, "@ " = away) to identify home/away teams.
 
 Safe to run multiple times — uses INSERT ON CONFLICT DO NOTHING.
 Reads DATABASE_URL from scripts/.env.
+
+Skipped season — 2019-20 (COVID bubble):
+  After the March 2020 shutdown, the league finished the season in a single-site
+  bubble in Orlando with no real home/road travel. Feeding those games into our
+  haversine / travel-fatigue model would corrupt schedule-load signals, so this
+  season is omitted entirely.
+
+Other notes:
+  2020-21: Normal home/away schedule (no bubble) — included.
 """
 
 import os
@@ -32,7 +42,18 @@ if not DATABASE_URL:
 # Set NBA_SEED_SKIP_OT=1 to skip per-game BoxScore calls (faster seed; OT stays 0).
 SKIP_OT_SEED = os.environ.get("NBA_SEED_SKIP_OT", "").lower() in ("1", "true", "yes")
 
-SEASONS = ["2023-24", "2024-25"]
+# 2019-20 omitted — Orlando bubble has no meaningful travel for fatigue analysis.
+SEASONS = [
+    "2015-16",
+    "2016-17",
+    "2017-18",
+    "2018-19",
+    "2020-21",
+    "2021-22",
+    "2022-23",
+    "2023-24",
+    "2024-25",
+]
 SEASON_TYPES = ["Regular Season", "Playoffs"]
 
 # Delay between NBA API calls to respect rate limits
@@ -58,6 +79,39 @@ def fetch_games_df(season: str, season_type: str) -> pd.DataFrame:
     df = finder.get_data_frames()[0]
     print(f"{len(df)} rows")
     return df
+
+
+# Some older seasons use different abbreviations in nba_api than what we store.
+# Map any legacy/alternate abbreviations → our canonical abbreviation.
+ABBR_ALIASES: dict[str, str] = {
+    "CHO": "CHA",   # Charlotte Hornets (nba_api alternates between CHO and CHA)
+    "NJN": "BKN",   # New Jersey Nets (moved to Brooklyn 2012-13; kept for safety)
+    "NOH": "NOP",   # New Orleans Hornets/Pelicans pre-2013 (kept for safety)
+    "NOK": "NOP",   # New Orleans/Oklahoma City Hornets (2005-07; unlikely but safe)
+    "SEA": "OKC",   # Seattle SuperSonics (became OKC 2008-09; kept for safety)
+    "VAN": "MEM",   # Vancouver Grizzlies (moved to Memphis 2001; kept for safety)
+}
+
+
+def normalize_abbr(abbr: str) -> str:
+    return ABBR_ALIASES.get(abbr, abbr)
+
+
+def get_game_type(game_id: str, game_date) -> str:
+    """
+    Determine season segment from the NBA API game ID and date.
+    - IDs starting with '004' are playoff games.
+    - Playoff games in June (month >= 6) are the Finals.
+    """
+    gid_str = str(game_id)
+    if gid_str.startswith("004"):
+        try:
+            month = game_date.month
+        except AttributeError:
+            import datetime
+            month = datetime.date.fromisoformat(str(game_date)).month
+        return "finals" if month >= 6 else "playoffs"
+    return "regular"
 
 
 def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[tuple]:
@@ -99,15 +153,15 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
         if isinstance(away, pd.DataFrame):
             away = away.iloc[0]
 
-        home_abbr = home["TEAM_ABBREVIATION"]
-        away_abbr = away["TEAM_ABBREVIATION"]
+        home_abbr = normalize_abbr(home["TEAM_ABBREVIATION"])
+        away_abbr = normalize_abbr(away["TEAM_ABBREVIATION"])
 
         if home_abbr not in team_map:
-            print(f"    WARNING: unknown home team abbreviation '{home_abbr}', skipping {game_id}")
+            print(f"    WARNING: unknown home team abbreviation '{home['TEAM_ABBREVIATION']}' (normalized: '{home_abbr}'), skipping {game_id}")
             skipped += 1
             continue
         if away_abbr not in team_map:
-            print(f"    WARNING: unknown away team abbreviation '{away_abbr}', skipping {game_id}")
+            print(f"    WARNING: unknown away team abbreviation '{away['TEAM_ABBREVIATION']}' (normalized: '{away_abbr}'), skipping {game_id}")
             skipped += 1
             continue
 
@@ -116,6 +170,7 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
 
         gid_str = str(game_id)
         ot_periods = 0 if SKIP_OT_SEED else fetch_overtime_periods(gid_str)
+        game_type = get_game_type(gid_str, home["GAME_DATE"])
 
         records.append((
             gid_str,
@@ -127,6 +182,7 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
             away_score,
             "final",
             ot_periods,
+            game_type,
         ))
 
     if skipped:
@@ -140,9 +196,9 @@ INSERT INTO games (
     external_id, date, season,
     home_team_id, away_team_id,
     home_score, away_score, status,
-    overtime_periods
+    overtime_periods, game_type
 )
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (external_id) DO NOTHING;
 """
 

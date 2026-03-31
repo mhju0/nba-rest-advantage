@@ -130,6 +130,21 @@ export interface MonthlyTrend {
   winPct: number;
 }
 
+/** Stats for a specific season segment (or all games combined). */
+export interface SeasonTypeStats {
+  totalGames: number;
+  overallWins: number;
+  overallWinRate: number;
+  thresholds: ThresholdBucket[];
+  homeAwayBreakdown: HomeAwayBreakdown;
+  monthlyTrends: MonthlyTrend[];
+  /**
+   * Overall ATS record for the more-rested team.
+   * null when no games in this segment have spread data.
+   */
+  atsOverall: { covered: number; total: number; coverRate: number } | null;
+}
+
 export interface AnalysisResponse {
   /** Total final games with fatigue data for both teams (|RA| >= 0.5). */
   totalGames: number;
@@ -140,4 +155,11 @@ export interface AnalysisResponse {
   homeAwayBreakdown: HomeAwayBreakdown;
   /** Sorted chronologically (ascending). */
   monthlyTrends: MonthlyTrend[];
+  atsOverall: { covered: number; total: number; coverRate: number } | null;
+  /** Pre-computed stats for each season segment (for the tab toggle). */
+  seasonTypeBreakdown: {
+    regular: SeasonTypeStats;
+    /** Includes both conference finals and NBA Finals. */
+    playoffs: SeasonTypeStats;
+  };
 }

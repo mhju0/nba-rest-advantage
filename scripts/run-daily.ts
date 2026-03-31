@@ -10,7 +10,7 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as Schema from "@/lib/db/schema";
 import { fatigueScores, games, predictions, teams } from "@/lib/db/schema";
-import { calculateFatigue } from "@/lib/fatigue";
+import { calculateFatigue, getSeasonTypeMultiplier } from "@/lib/fatigue";
 import { fetchRecentGamesForTeam } from "@/lib/fatigue-recent-games";
 import { loadEnvLocal } from "@/lib/load-env-local";
 
@@ -36,6 +36,7 @@ async function main(): Promise<void> {
   const todaysGames = await appDb
     .select({
       id: games.id,
+      externalId: games.externalId,
       date: games.date,
       homeTeamId: games.homeTeamId,
       awayTeamId: games.awayTeamId,
@@ -81,16 +82,20 @@ async function main(): Promise<void> {
       homeLon
     );
 
+    // Playoff/Finals games are more physically taxing — multiply the fatigue score.
+    const playoffMultiplier = getSeasonTypeMultiplier(game.externalId, gameDateStr);
+
     const rows: Array<{ teamId: number; result: typeof homeResult }> = [
       { teamId: game.homeTeamId, result: homeResult },
       { teamId: game.awayTeamId, result: awayResult },
     ];
 
     for (const { teamId, result: r } of rows) {
+      const adjustedScore = Math.round(r.score * playoffMultiplier * 100) / 100;
       await appDb.insert(fatigueScores).values({
         gameId: game.id,
         teamId,
-        score: String(r.score),
+        score: String(adjustedScore),
         decayLoadScore: String(r.decayLoadScore),
         travelLoadScore: String(r.travelLoadScore),
         backToBackMultiplier: String(r.backToBackMultiplier),

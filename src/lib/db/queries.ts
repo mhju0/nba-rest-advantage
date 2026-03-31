@@ -175,6 +175,7 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
 
 type CompletedGameRow = {
   date: string;
+  gameType: string;
   homeScore: number | null;
   awayScore: number | null;
   spread: string | null;
@@ -193,6 +194,7 @@ export async function getCompletedGamesWithFatigue(): Promise<CompletedGameRow[]
   return db
     .select({
       date: games.date,
+      gameType: games.gameType,
       homeScore: games.homeScore,
       awayScore: games.awayScore,
       spread: games.spread,
