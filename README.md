@@ -238,7 +238,7 @@ Constants live in `src/lib/fatigue.ts` so they can be tuned after backtesting.
 ## Deployment
 
 - **Vercel:** Connect the repo, set `DATABASE_URL`, `NEXT_PUBLIC_*` Supabase vars, and `CRON_SECRET`. Production API errors return generic messages; details are logged server-side only.
-- **Cron:** `vercel.json` schedules `GET /api/cron/update` during U.S. game windows for near-live score sync.
+- **Cron:** `vercel.json` schedules `GET /api/cron/update` once daily at **10:00 UTC** (7 PM KST), compatible with Vercel Hobby’s daily cron limit; GitHub Actions can still run more frequent updates if needed.
 - **GitHub Actions:** `.github/workflows/daily-update.yml` runs nightly (UTC) to finalize yesterday’s scores and run `scripts/daily_update.py`, which calls `pnpm exec tsx scripts/run-daily.ts` for today’s fatigue and predictions. Set the **`DATABASE_URL`** secret in the repo settings.
 
 ---

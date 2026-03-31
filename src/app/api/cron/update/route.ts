@@ -16,6 +16,8 @@ import { games } from "@/lib/db/schema";
  * to all connected clients when the `games` table is updated.
  *
  * Secured with CRON_SECRET — set this in your environment variables.
+ *
+ * On Vercel Hobby, crons are limited to once per day (`vercel.json`: 10:00 UTC).
  */
 export async function GET(request: Request) {
   // Authenticate the request
