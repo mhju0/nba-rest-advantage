@@ -13,6 +13,12 @@
  *   pnpm exec tsx scripts/backfill_fatigue.ts --force                 # wipe fatigue_scores, recompute all
  *
  * Typical runtime: scales with game count (~30–90+ minutes for 20 seasons / ~25k+ games).
+ *
+ * Prerequisite — `fatigue_scores` must include columns from `drizzle/0002_fatigue_schedule_road.sql`
+ * (`games_in_last_30_days`, `road_trip_consecutive_away`, `is_three_in_four`, `is_four_in_six`,
+ * `has_coast_to_coast_road_swing`). If inserts fail with "column does not exist", run:
+ *   pnpm drizzle-kit push
+ * or execute that SQL file in the Supabase SQL editor against the same DATABASE_URL.
  */
 
 import { and, asc, between, eq, isNull, sql } from "drizzle-orm";
@@ -25,6 +31,40 @@ import { fetchRecentGamesForTeam } from "@/lib/fatigue-recent-games";
 import { loadEnvLocal } from "@/lib/load-env-local";
 
 type AppDb = PostgresJsDatabase<typeof Schema>;
+
+const REQUIRED_FATIGUE_COLUMNS = [
+  "games_in_last_30_days",
+  "road_trip_consecutive_away",
+  "is_three_in_four",
+  "is_four_in_six",
+  "has_coast_to_coast_road_swing",
+] as const;
+
+/**
+ * Fails fast with a clear message when Supabase/schema is behind `src/lib/db/schema.ts`
+ * (avoids thousands of identical insert errors).
+ */
+async function assertFatigueScoresSchema(appDb: AppDb): Promise<void> {
+  const result = await appDb.execute(
+    sql.raw(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'fatigue_scores'
+       AND column_name IN (${REQUIRED_FATIGUE_COLUMNS.map((c) => `'${c}'`).join(", ")})`
+    )
+  );
+  const rows = result as unknown as { column_name: string }[];
+  const found = new Set(rows.map((r) => r.column_name));
+  const missing = REQUIRED_FATIGUE_COLUMNS.filter((c) => !found.has(c));
+  if (missing.length > 0) {
+    console.error(
+      "[backfill] fatigue_scores is missing column(s): %s\n" +
+        "Apply migration drizzle/0002_fatigue_schedule_road.sql or run: pnpm drizzle-kit push\n" +
+        "(Uses DATABASE_URL from .env.local — same DB the backfill targets.)",
+      missing.join(", ")
+    );
+    process.exit(1);
+  }
+}
 
 async function main(): Promise<void> {
   loadEnvLocal();
@@ -55,6 +95,8 @@ async function main(): Promise<void> {
 
   const { db } = await import("@/lib/db");
   const appDb = db as AppDb;
+
+  await assertFatigueScoresSchema(appDb);
 
   // ── Load all teams ───────────────────────────────────────────────
   const teamRows = await appDb.select().from(teams);

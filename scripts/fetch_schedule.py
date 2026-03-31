@@ -15,6 +15,8 @@ Skipped season — 2019-20 (COVID bubble):
 
 Other notes:
   2020-21: Normal home/away schedule (no bubble) — included.
+
+  Playoffs: Not fetched — only Regular Season (stats.nba.com game IDs with 002 prefix).
 """
 
 import os
@@ -65,7 +67,8 @@ SEASONS = [
     "2024-25",
     "2025-26",
 ]
-SEASON_TYPES = ["Regular Season", "Playoffs"]
+# Playoffs excluded — app and fatigue model target regular season only.
+SEASON_TYPES = ["Regular Season"]
 
 # Delay between NBA API calls to respect rate limits
 API_DELAY_SECONDS = 1
@@ -108,13 +111,27 @@ def normalize_abbr(abbr: str) -> str:
     return ABBR_ALIASES.get(abbr, abbr)
 
 
+def normalize_stats_game_id(game_id: object) -> str:
+    """10-digit NBA stats GAME_ID string (zero-padded if numeric)."""
+    s = str(game_id).strip()
+    if s.isdigit() and len(s) < 10:
+        return s.zfill(10)
+    return s
+
+
+def is_regular_season_game_id(game_id: object) -> bool:
+    """Regular-season games use a 002 prefix in NBA stats GAME_ID."""
+    gid = normalize_stats_game_id(game_id)
+    return len(gid) >= 3 and gid.startswith("002")
+
+
 def get_game_type(game_id: str, game_date) -> str:
     """
     Determine season segment from the NBA API game ID and date.
     - IDs starting with '004' are playoff games.
     - Playoff games in June (month >= 6) are the Finals.
     """
-    gid_str = str(game_id)
+    gid_str = normalize_stats_game_id(game_id)
     if gid_str.startswith("004"):
         try:
             month = game_date.month
@@ -150,6 +167,7 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
     away_idx = away_rows.set_index("GAME_ID")
 
     skipped = 0
+    skipped_non_regular = 0
     records: list[tuple] = []
 
     # Use home_rows as the driver — every game has exactly one home row
@@ -176,10 +194,14 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
             skipped += 1
             continue
 
+        gid_str = normalize_stats_game_id(game_id)
+        if not is_regular_season_game_id(gid_str):
+            skipped_non_regular += 1
+            continue
+
         home_score = int(home["PTS"]) if pd.notna(home["PTS"]) else None
         away_score = int(away["PTS"]) if pd.notna(away["PTS"]) else None
 
-        gid_str = str(game_id)
         ot_periods = 0 if SKIP_OT_SEED else fetch_overtime_periods(gid_str)
         game_type = get_game_type(gid_str, home["GAME_DATE"])
 
@@ -196,6 +218,8 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
             game_type,
         ))
 
+    if skipped_non_regular:
+        print(f"    Skipped {skipped_non_regular} non-regular games (game_id prefix is not 002).")
     if skipped:
         print(f"    Skipped {skipped} games due to missing data.")
 
@@ -241,8 +265,7 @@ def main() -> None:
 
                 time.sleep(API_DELAY_SECONDS)
 
-            # Deduplicate within season (same game_id shouldn't appear in both
-            # Regular Season and Playoffs, but guard anyway)
+            # Deduplicate within season (guard against duplicate API rows)
             seen: set[str] = set()
             unique_records = []
             for rec in season_records:

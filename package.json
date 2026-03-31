@@ -10,7 +10,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "backfill:historical": "python3 scripts/backfill_historical.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",

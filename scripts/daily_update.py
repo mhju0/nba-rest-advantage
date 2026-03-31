@@ -87,7 +87,9 @@ def main() -> None:
 
 
 def apply_score_updates(conn, df: pd.DataFrame) -> int:
-    """Pair home/away rows by GAME_ID and UPDATE games by external_id."""
+    """Pair home/away rows by GAME_ID and UPDATE games by external_id (regular season only)."""
+    from fetch_schedule import is_regular_season_game_id, normalize_stats_game_id
+
     df = df.copy()
     df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"]).dt.date
     df["PTS"] = pd.to_numeric(df["PTS"], errors="coerce")
@@ -106,7 +108,9 @@ def apply_score_updates(conn, df: pd.DataFrame) -> int:
             if isinstance(away, pd.DataFrame):
                 away = away.iloc[0]
 
-            gid = str(game_id)
+            gid = normalize_stats_game_id(game_id)
+            if not is_regular_season_game_id(gid):
+                continue
             if pd.isna(home["PTS"]) or pd.isna(away["PTS"]):
                 continue
 
@@ -121,19 +125,19 @@ def apply_score_updates(conn, df: pd.DataFrame) -> int:
                     status = 'final'
                 WHERE external_id = %s
                 """,
-                (h_pts, a_pts, gid),
+                (h_pts, a_pts, str(gid)),
             )
             touched += cur.rowcount
 
             if cur.rowcount > 0:
-                ot_periods = fetch_overtime_periods(gid)
+                ot_periods = fetch_overtime_periods(str(gid))
                 cur.execute(
                     """
                     UPDATE games
                     SET overtime_periods = %s
                     WHERE external_id = %s
                     """,
-                    (ot_periods, gid),
+                    (ot_periods, str(gid)),
                 )
 
         conn.commit()
