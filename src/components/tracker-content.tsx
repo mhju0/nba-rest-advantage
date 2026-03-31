@@ -12,10 +12,11 @@ import {
   ReferenceLine,
 } from "recharts"
 import type { TooltipContentProps } from "recharts"
-import { format, parse, parseISO } from "date-fns"
+import { format, parseISO } from "date-fns"
+import Link from "next/link"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import type { ApiResponse, AccuracyResponse, AccuracyTier, MonthlyAccuracyPoint } from "@/types"
+import type { ApiResponse, AccuracyResponse, AccuracyTier, SeasonAccuracyPoint } from "@/types"
 
 // ─── Shared styles ────────────────────────────────────────────────
 
@@ -57,30 +58,26 @@ const TIER_CONFIG: Record<
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function fmtMonth(ym: string): string {
-  return format(parse(ym, "yyyy-MM", new Date()), "MMM ''yy")
-}
-
 function pct(n: number): string {
   return n === 0 ? "—" : `${n}%`
 }
 
 // ─── Custom tooltip ───────────────────────────────────────────────
 
-function AccuracyTooltip({ active, payload }: TooltipContentProps) {
+function SeasonAccuracyTooltip({ active, payload }: TooltipContentProps) {
   if (!active || !payload?.length) return null
-  const d = payload[0].payload as MonthlyAccuracyPoint
+  const d = payload[0].payload as SeasonAccuracyPoint
   return (
     <div
       className="rounded-xl border border-white/60 px-3 py-2 text-xs shadow-lg"
       style={{ background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)" }}
     >
-      <p className="font-semibold text-slate-800">{fmtMonth(d.month)}</p>
+      <p className="font-semibold text-slate-800">{d.season}</p>
       <p className="mt-0.5 text-[#17408B]">
         Accuracy: <span className="font-bold">{d.accuracyPct}%</span>
       </p>
       <p className="text-slate-500">
-        {d.cumulativeCorrect} / {d.cumulativeGames} correct
+        {d.correct.toLocaleString()} / {d.games.toLocaleString()} correct
       </p>
     </div>
   )
@@ -166,6 +163,78 @@ export function TrackerContent() {
 
   return (
     <div className="flex flex-col gap-6">
+      <p className="max-w-2xl text-sm leading-relaxed text-slate-500">
+        Open picks for{" "}
+        <span className="font-medium text-slate-700">{data.trackerSeason}</span> are scheduled
+        regular-season games (today onward) that already have a prediction row but no final score yet.
+        History below is every graded pick in the database after deduplicating by game (regular season,
+        Oct–Apr dates only — playoff slates are excluded). For raw win-rate research without prediction
+        rows, see{" "}
+        <Link href="/analysis" className="font-medium text-[#17408B] underline-offset-2 hover:underline">
+          Analysis
+        </Link>
+        .
+      </p>
+
+      {/* ── Upcoming slate ────────────────────────────────────────── */}
+      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
+        <p className="text-sm font-semibold text-slate-800">Upcoming picks (this season)</p>
+        <p className="mt-0.5 text-xs text-slate-400">
+          {data.trackerSeason} · scheduled games from today with unresolved predictions
+        </p>
+
+        {data.upcomingPicks.length === 0 ? (
+          <p className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-white/30 px-4 py-8 text-center text-xs leading-relaxed text-slate-500">
+            No open predictions on the schedule right now. Between seasons, or before the daily sync
+            loads new games, this stays empty — it will fill again when the regular-season schedule is in
+            the database and the pipeline writes fresh rows.
+          </p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr
+                  style={{ background: "rgba(23,64,139,0.04)" }}
+                  className="rounded-lg"
+                >
+                  <th className="rounded-l-lg px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
+                    Date
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
+                    Matchup
+                  </th>
+                  <th className="rounded-r-lg px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
+                    Predicted edge
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.upcomingPicks.map((p) => (
+                  <tr
+                    key={p.gameId}
+                    className="border-t border-slate-100/60 transition-colors hover:bg-white/40"
+                  >
+                    <td className="px-3 py-3 text-slate-500">
+                      {format(parseISO(p.date), "MMM d, yyyy")}
+                    </td>
+                    <td className="px-3 py-3 font-medium text-slate-800">
+                      {p.awayTeam.abbreviation}
+                      <span className="mx-1 font-normal text-slate-300">@</span>
+                      {p.homeTeam.abbreviation}
+                    </td>
+                    <td className="px-3 py-3 text-slate-700">
+                      <span className="font-semibold text-[#17408B]">
+                        {p.predictedAdvantageTeam.abbreviation}
+                      </span>{" "}
+                      +{p.differential.toFixed(1)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* ── 1. Hero accuracy stat ─────────────────────────────────── */}
       <div
@@ -183,7 +252,7 @@ export function TrackerContent() {
         <p className="mt-2 text-base font-semibold text-slate-700">Prediction Accuracy</p>
         <p className="mt-1 text-sm text-slate-400">
           {noData
-            ? "No predictions yet — run the backfill script to populate"
+            ? "No graded predictions yet — run the backfill script to populate history"
             : `${data.correctPredictions.toLocaleString()} of ${data.totalPredictions.toLocaleString()} predictions correct`}
         </p>
       </div>
@@ -227,30 +296,29 @@ export function TrackerContent() {
         })}
       </div>
 
-      {/* ── 3. Monthly accuracy trend chart ───────────────────────── */}
+      {/* ── 3. Accuracy by season ─────────────────────────────────── */}
       <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-        <p className="text-sm font-semibold text-slate-800">Monthly Accuracy Trend</p>
+        <p className="text-sm font-semibold text-slate-800">Accuracy by season</p>
         <p className="mt-0.5 text-xs text-slate-400">
-          Cumulative prediction accuracy, grouped by month · 2015–present
+          Win rate of the prediction rule for each NBA season in the database
         </p>
 
         <div className="mt-6 h-56">
-          {data.monthlyTrend.length === 0 ? (
+          {data.seasonAccuracyTrend.length === 0 ? (
             <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200">
               <p className="text-xs text-slate-400">
-                Accuracy trend will appear as predictions accumulate
+                Season breakdown appears once graded predictions exist
               </p>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
-                data={data.monthlyTrend}
+                data={data.seasonAccuracyTrend}
                 margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
                 <XAxis
-                  dataKey="month"
-                  tickFormatter={fmtMonth}
+                  dataKey="season"
                   interval="preserveStartEnd"
                   tick={{ fontSize: 10, fill: "#94a3b8" }}
                   tickLine={false}
@@ -267,7 +335,7 @@ export function TrackerContent() {
                 <Tooltip
                   cursor={{ stroke: "rgba(23,64,139,0.15)", strokeWidth: 1 }}
                   content={(props: TooltipContentProps) => (
-                    <AccuracyTooltip {...props} />
+                    <SeasonAccuracyTooltip {...props} />
                   )}
                 />
                 <ReferenceLine
@@ -299,7 +367,7 @@ export function TrackerContent() {
 
       {/* ── 4. Recent predictions table (last 20) ─────────────────── */}
       <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-        <p className="mb-4 text-sm font-semibold text-slate-800">Recent Predictions</p>
+        <p className="mb-4 text-sm font-semibold text-slate-800">Recent graded predictions</p>
 
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -332,13 +400,13 @@ export function TrackerContent() {
                     colSpan={5}
                     className="px-3 py-10 text-center text-slate-400"
                   >
-                    Recent predictions will appear here
+                    Graded predictions will appear here
                   </td>
                 </tr>
               ) : (
-                data.recentPredictions.map((p, i) => (
+                data.recentPredictions.map((p) => (
                   <tr
-                    key={i}
+                    key={`${p.date}-${p.homeTeam.id}-${p.awayTeam.id}`}
                     className="border-t border-slate-100/60 transition-colors hover:bg-white/40"
                   >
                     <td className="px-3 py-3 text-slate-500">
@@ -391,13 +459,12 @@ export function TrackerContent() {
           Methodology
         </p>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
-          Predictions are based on rest advantage differential — the difference in computed
-          fatigue scores between the two teams. The more-rested team (lower fatigue score)
-          is predicted to win. A higher differential indicates greater confidence. Only regular
-          season games with a rest advantage of ≥ 0.5 are counted.
+          Predictions are based on rest advantage differential — the difference in computed fatigue
+          scores between the two teams. The more-rested team (lower fatigue score) is predicted to win.
+          A higher differential indicates greater confidence. Counts are limited to regular-season games
+          on the standard Oct–Apr calendar window, with one graded row per game.
         </p>
       </div>
-
     </div>
   )
 }

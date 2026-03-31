@@ -114,10 +114,15 @@ async function main(): Promise<void> {
         densityMultiplier: String(r.densityMultiplier),
         freshnessBonus: String(r.freshnessBonus),
         gamesInLast7Days: r.gamesInLast7Days,
+        gamesInLast30Days: r.gamesInLast30Days,
         travelDistanceMiles: String(r.travelDistanceMiles),
         isBackToBack: r.isBackToBack,
         daysSinceLastGame: r.daysSinceLastGame,
         isOvertimePenalty: r.isOvertimePenalty,
+        roadTripConsecutiveAway: r.roadTripConsecutiveAway,
+        isThreeInFour: r.isThreeInFour,
+        isFourInSix: r.isFourInSix,
+        hasCoastToCoastRoadSwing: r.hasCoastToCoastRoadSwing,
       });
       fatigueRows++;
     }

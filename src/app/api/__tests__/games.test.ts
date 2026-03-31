@@ -39,8 +39,11 @@ const sampleGame: GameResponse = {
     altitudeArenaLabel: null,
     daysRest: 2,
     gamesInLast7Days: 2,
+    gamesInLast30Days: 8,
     is4In6: false,
     isOvertimePenalty: false,
+    roadTripConsecutiveAway: 0,
+    hasCoastToCoastRoadSwing: false,
   },
   awayFatigue: {
     score: 5.3,
@@ -51,8 +54,11 @@ const sampleGame: GameResponse = {
     altitudeArenaLabel: "Boston (altitude)",
     daysRest: 1,
     gamesInLast7Days: 4,
+    gamesInLast30Days: 14,
     is4In6: true,
     isOvertimePenalty: true,
+    roadTripConsecutiveAway: 3,
+    hasCoastToCoastRoadSwing: true,
   },
   restAdvantage: {
     differential: 3.2,

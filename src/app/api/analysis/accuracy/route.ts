@@ -1,12 +1,18 @@
+import { format } from "date-fns";
 import { NextResponse } from "next/server";
 import { getPublicApiErrorMessage } from "@/lib/api-errors";
-import { getResolvedPredictions } from "@/lib/db/queries";
+import {
+  getResolvedPredictions,
+  getUpcomingPredictionsForSeason,
+} from "@/lib/db/queries";
+import { defaultNbaSeason } from "@/lib/nba-season";
 import type {
   AccuracyResponse,
   AccuracyTier,
   ApiResponse,
-  MonthlyAccuracyPoint,
   PredictionDetail,
+  SeasonAccuracyPoint,
+  UpcomingPick,
 } from "@/types";
 
 export const revalidate = 86400; // 24 hours
@@ -27,16 +33,36 @@ const EMPTY_RESPONSE: AccuracyResponse = {
   correctPredictions: 0,
   accuracyPct: 0,
   tiers: EMPTY_TIERS,
-  monthlyTrend: [],
+  seasonAccuracyTrend: [],
   recentPredictions: [],
+  trackerSeason: defaultNbaSeason(),
+  upcomingPicks: [],
 };
 
 export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>> {
   try {
-    const rows = await getResolvedPredictions();
+    const trackerSeason = defaultNbaSeason();
+    const todayYmd = format(new Date(), "yyyy-MM-dd");
+
+    const [rows, upcomingRows] = await Promise.all([
+      getResolvedPredictions(),
+      getUpcomingPredictionsForSeason(trackerSeason, todayYmd),
+    ]);
+
+    const upcomingPicks: UpcomingPick[] = upcomingRows.map((r) => ({
+      gameId: r.gameId,
+      date: r.date,
+      homeTeam: { abbreviation: r.homeTeamAbbreviation },
+      awayTeam: { abbreviation: r.awayTeamAbbreviation },
+      predictedAdvantageTeam: { abbreviation: r.predictedTeamAbbreviation },
+      differential: Math.abs(parseFloat(r.differential)),
+    }));
 
     if (rows.length === 0) {
-      return NextResponse.json({ data: EMPTY_RESPONSE, error: null });
+      return NextResponse.json({
+        data: { ...EMPTY_RESPONSE, trackerSeason, upcomingPicks },
+        error: null,
+      });
     }
 
     // ── Single-pass aggregation ───────────────────────────────────
@@ -46,8 +72,7 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
       high: { games: 0, correct: 0 },
     };
 
-    // Map of "YYYY-MM" → { total, correct } for monthly accuracy trend
-    const monthMap = new Map<string, { total: number; correct: number }>();
+    const seasonMap = new Map<string, { total: number; correct: number }>();
 
     let totalCorrect = 0;
 
@@ -68,12 +93,10 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
         if (isCorrect) tierCounters.low.correct++;
       }
 
-      // Monthly grouping (YYYY-MM) for trend chart
-      const month = row.date.slice(0, 7);
-      const entry = monthMap.get(month) ?? { total: 0, correct: 0 };
-      entry.total++;
-      if (isCorrect) entry.correct++;
-      monthMap.set(month, entry);
+      const sEntry = seasonMap.get(row.season) ?? { total: 0, correct: 0 };
+      sEntry.total++;
+      if (isCorrect) sEntry.correct++;
+      seasonMap.set(row.season, sEntry);
     }
 
     // ── Tiers ─────────────────────────────────────────────────────
@@ -101,23 +124,14 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
       },
     ];
 
-    // ── Monthly cumulative accuracy trend ─────────────────────────
-    const sortedMonths = Array.from(monthMap.keys()).sort();
-    let cumTotal = 0;
-    let cumCorrect = 0;
-    const monthlyTrend: MonthlyAccuracyPoint[] = [];
-
-    for (const month of sortedMonths) {
-      const { total, correct } = monthMap.get(month)!;
-      cumTotal += total;
-      cumCorrect += correct;
-      monthlyTrend.push({
-        month,
-        cumulativeGames: cumTotal,
-        cumulativeCorrect: cumCorrect,
-        accuracyPct: accuracyPct(cumCorrect, cumTotal),
-      });
-    }
+    const seasonAccuracyTrend: SeasonAccuracyPoint[] = Array.from(seasonMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([season, { total, correct }]) => ({
+        season,
+        games: total,
+        correct,
+        accuracyPct: accuracyPct(correct, total),
+      }));
 
     // ── Last 20 predictions (newest first) ────────────────────────
     const recentPredictions: PredictionDetail[] = rows
@@ -154,8 +168,10 @@ export async function GET(): Promise<NextResponse<ApiResponse<AccuracyResponse>>
       correctPredictions: totalCorrect,
       accuracyPct: accuracyPct(totalCorrect, rows.length),
       tiers,
-      monthlyTrend,
+      seasonAccuracyTrend,
       recentPredictions,
+      trackerSeason,
+      upcomingPicks,
     };
 
     return NextResponse.json({ data: response, error: null });

@@ -15,12 +15,21 @@ export interface FatigueInfo {
   altitudeArenaLabel: string | null;
   /** Days since this team's previous game; null = season opener / no prior game. */
   daysRest: number | null;
-  /** Games this team played in the 7-day lookback (same window as the fatigue model). */
+  /** Games in the 7 calendar days before this game (not counting this game). */
   gamesInLast7Days: number;
-  /** Fourth game within a rolling 6-day window ending on this game date. */
+  /** Games in the 30 calendar days before this game (not counting this game). */
+  gamesInLast30Days: number;
+  /** Fourth game within a rolling 6-calendar-day span in that window. */
   is4In6: boolean;
   /** Prior game went to overtime (extra fatigue in the model). */
   isOvertimePenalty: boolean;
+  /**
+   * Consecutive away games including tonight when this team is away; 0 when playing at home
+   * or with no road streak into this game.
+   */
+  roadTripConsecutiveAway: number;
+  /** Large east–west spread between home and road venues on the current / recent trip. */
+  hasCoastToCoastRoadSwing: boolean;
 }
 
 export interface RestAdvantage {
@@ -67,11 +76,11 @@ export interface AccuracyTier {
   accuracyPct: number;
 }
 
-export interface MonthlyAccuracyPoint {
-  /** "YYYY-MM" */
-  month: string;
-  cumulativeGames: number;
-  cumulativeCorrect: number;
+/** Per-season accuracy of stored predictions (|RA| ≥ 0.5 rule), sorted by season label. */
+export interface SeasonAccuracyPoint {
+  season: string;
+  games: number;
+  correct: number;
   /** Accuracy percentage (0–100, 1 decimal). */
   accuracyPct: number;
 }
@@ -87,16 +96,29 @@ export interface PredictionDetail {
   correct: boolean;
 }
 
+export interface UpcomingPick {
+  gameId: number;
+  date: string;
+  homeTeam: Pick<TeamInfo, "abbreviation">;
+  awayTeam: Pick<TeamInfo, "abbreviation">;
+  predictedAdvantageTeam: Pick<TeamInfo, "abbreviation">;
+  differential: number;
+}
+
 export interface AccuracyResponse {
   totalPredictions: number;
   correctPredictions: number;
   /** Overall accuracy percentage (0–100, 1 decimal). */
   accuracyPct: number;
   tiers: AccuracyTier[];
-  /** Monthly cumulative accuracy, sorted oldest→newest. */
-  monthlyTrend: MonthlyAccuracyPoint[];
+  /** Prediction accuracy by NBA season (chronological). */
+  seasonAccuracyTrend: SeasonAccuracyPoint[];
   /** Most recent 20 resolved predictions, newest first. */
   recentPredictions: PredictionDetail[];
+  /** Label of the season used for the upcoming slate (e.g. latest season in app config). */
+  trackerSeason: string;
+  /** Scheduled regular-season games with an open prediction row, from today onward. */
+  upcomingPicks: UpcomingPick[];
 }
 
 // ─── Analysis ────────────────────────────────────────────────────
@@ -136,21 +158,6 @@ export interface MonthlyTrend {
   winPct: number;
 }
 
-/** One bucket within the regular-season month axis (Oct–Apr). */
-export interface RegularSeasonMonthStat {
-  /** Short label: Oct, Nov, … Apr */
-  label: string;
-  games: number;
-  restedTeamWins: number;
-  winPct: number;
-}
-
-/** Win rate by month for a single NBA season. */
-export interface SeasonMonthlyWinRate {
-  season: string;
-  months: RegularSeasonMonthStat[];
-}
-
 /** Historical backtest stats (final games with fatigue data, |RA| >= 0.5). */
 export interface AnalysisResponse {
   /** Total games counted (|RA| >= 0.5). */
@@ -163,13 +170,14 @@ export interface AnalysisResponse {
   /** Sorted chronologically (ascending). */
   monthlyTrends: MonthlyTrend[];
   /**
-   * Per-season monthly win rates on the Oct–Apr axis (same month label across years).
+   * More-rested team win rate aggregated per NBA season (regular-season calendar only).
    */
-  monthlyWinRateBySeason: SeasonMonthlyWinRate[];
-  /**
-   * Pooled across all seasons: wins/games for each Oct–Apr bucket (the “Average” line).
-   */
-  monthlyWinRatePooledByMonth: RegularSeasonMonthStat[];
+  seasonWinRates: {
+    season: string;
+    games: number;
+    restedTeamWins: number;
+    winPct: number;
+  }[];
   atsOverall: { covered: number; total: number; coverRate: number } | null;
 }
 

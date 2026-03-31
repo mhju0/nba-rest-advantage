@@ -21,16 +21,21 @@ export interface PriorGameRow {
   overtimePeriods: number;
 }
 
+import { FATIGUE_RECENT_LOOKBACK_DAYS } from "./fatigue";
+
 /**
- * Loads a team's prior games in the 7-day lookback window before `gameDateStr`,
- * ordered oldest → newest, for fatigue calculation.
+ * Loads a team's prior games in the fatigue lookback window (see `FATIGUE_RECENT_LOOKBACK_DAYS`)
+ * before `gameDateStr`, ordered oldest → newest.
  */
 export async function fetchRecentGamesForTeam(
   db: AppDb,
   teamId: number,
   gameDateStr: string
 ): Promise<RecentGame[]> {
-  const windowStart = format(subDays(parseISO(gameDateStr), 7), "yyyy-MM-dd");
+  const windowStart = format(
+    subDays(parseISO(gameDateStr), FATIGUE_RECENT_LOOKBACK_DAYS),
+    "yyyy-MM-dd"
+  );
   const homeTeamAlias = alias(teams, "home_team");
   const awayTeamAlias = alias(teams, "away_team");
 

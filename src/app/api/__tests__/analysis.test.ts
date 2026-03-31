@@ -77,8 +77,7 @@ describe("GET /api/analysis", () => {
       }),
     });
     expect(Array.isArray(d.monthlyTrends)).toBe(true);
-    expect(Array.isArray(d.monthlyWinRateBySeason)).toBe(true);
-    expect(d.monthlyWinRatePooledByMonth).toHaveLength(7);
+    expect(Array.isArray(d.seasonWinRates)).toBe(true);
   });
 
   it("surfaces percentages between 0 and 100 everywhere", async () => {

@@ -178,6 +178,35 @@ function B2BBadge() {
   )
 }
 
+function ScheduleStressBadge({
+  label,
+  className,
+}: {
+  label: string
+  className?: string
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full bg-amber-500/95 px-1.5 py-px font-heading text-[10px] font-bold uppercase leading-3 tracking-wide text-white shadow-sm",
+        className
+      )}
+    >
+      {label}
+    </span>
+  )
+}
+
+function RoadTripBadge({ nights }: { nights: number }) {
+  if (nights < 2) return null
+  return (
+    <ScheduleStressBadge
+      label={`Road ×${nights}`}
+      className="bg-[#17408B]/90"
+    />
+  )
+}
+
 function RaBadge({
   restAdvantage,
   homeAbbr,
@@ -257,9 +286,9 @@ function FatigueDetailColumn({
       </p>
 
       <div className="flex justify-between gap-2 text-xs">
-        <span className="text-slate-500">Schedule load</span>
+        <span className="text-slate-500">Games (30d / 7d)</span>
         <span className="font-heading font-semibold tabular-nums text-slate-800">
-          {fatigue.gamesInLast7Days} in 7d
+          {fatigue.gamesInLast30Days} / {fatigue.gamesInLast7Days}
         </span>
       </div>
 
@@ -276,6 +305,23 @@ function FatigueDetailColumn({
       <div className="flex justify-between gap-2 text-xs">
         <span className="text-slate-500">4 in 6 nights</span>
         <PenaltyMark active={fatigue.is4In6} />
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">Road trip (streak)</span>
+        <span
+          className={cn(
+            "font-heading font-semibold tabular-nums",
+            fatigue.roadTripConsecutiveAway >= 3 ? "text-[#17408B]" : "text-slate-800"
+          )}
+        >
+          {fatigue.roadTripConsecutiveAway === 0 ? "—" : `×${fatigue.roadTripConsecutiveAway}`}
+        </span>
+      </div>
+
+      <div className="flex justify-between gap-2 text-xs">
+        <span className="text-slate-500">Coast swing</span>
+        <PenaltyMark active={fatigue.hasCoastToCoastRoadSwing} />
       </div>
 
       <div className="flex justify-between gap-2 text-xs">
@@ -320,13 +366,13 @@ function FatigueDetailColumn({
 function TeamRow({
   side,
   abbreviation,
-  isB2B,
+  fatigue,
   score,
   highlight,
 }: {
   side: "AWAY" | "HOME"
   abbreviation: string
-  isB2B: boolean
+  fatigue: FatigueInfo | null
   score: number | null
   highlight: "advantage" | "disadvantage" | "neutral"
 }) {
@@ -342,12 +388,20 @@ function TeamRow({
     >
       <div className="flex items-center gap-2">
         <TeamLogo abbreviation={abbreviation} />
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
             {side}
           </span>
           <span className="font-heading text-sm font-bold text-slate-800">{abbreviation}</span>
-          {isB2B && <B2BBadge />}
+          {fatigue?.isBackToBack && <B2BBadge />}
+          {fatigue?.is3In4 && <ScheduleStressBadge label="3in4" />}
+          {fatigue?.is4In6 && <ScheduleStressBadge label="4in6" />}
+          {fatigue && (
+            <RoadTripBadge nights={fatigue.roadTripConsecutiveAway} />
+          )}
+          {fatigue?.hasCoastToCoastRoadSwing && (
+            <ScheduleStressBadge label="Coast" className="bg-violet-600/95" />
+          )}
         </div>
         <span className="ml-auto shrink-0 font-heading text-base font-semibold tabular-nums text-slate-700">
           {score !== null ? score.toFixed(1) : "—"}
@@ -461,7 +515,7 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
           <TeamRow
             side="AWAY"
             abbreviation={game.awayTeam.abbreviation}
-            isB2B={game.awayFatigue?.isBackToBack ?? false}
+            fatigue={game.awayFatigue}
             score={game.awayFatigue?.score ?? null}
             highlight={awayHighlight}
           />
@@ -477,7 +531,7 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
           <TeamRow
             side="HOME"
             abbreviation={game.homeTeam.abbreviation}
-            isB2B={game.homeFatigue?.isBackToBack ?? false}
+            fatigue={game.homeFatigue}
             score={game.homeFatigue?.score ?? null}
             highlight={homeHighlight}
           />

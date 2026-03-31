@@ -1,75 +1,74 @@
 /**
  * NBA Rest Advantage — Weighted Decay Fatigue Model
  *
- * Unlike simple "add points for back-to-back" systems, this model
- * treats fatigue as a continuous, compounding signal:
- *
- * 1. DECAY LOAD: Each recent game contributes fatigue that decays
- *    exponentially over time (yesterday's game hurts more than
- *    one from 5 days ago)
- *
- * 2. TRAVEL LOAD: Cumulative travel distance over the lookback window (each leg
- *    uses home/away context: e.g. away→home returns to home city; away→away
- *    uses a direct road leg on 0–1 day gaps, or via home when 2+ days off),
- *    then log-scaled (the first 1000 miles hurt more than the next 1000)
- *
- * 3. MULTIPLIERS: Contextual factors that amplify base fatigue:
- *    - Back-to-back: compounds the decay load
- *    - Altitude: visiting Denver/Utah without acclimation
- *    - Schedule density: games-per-day ratio in the window
- *
- * 4. FRESHNESS BONUS: Extended rest reduces fatigue, with
- *    diminishing returns (5 days off ≈ 3 days off)
- *
- * Final score = (decayLoad + travelLoad) × multipliers + freshnessBonus
- * Range: typically 0 (fully rested) to ~15 (extremely fatigued)
+ * 1. DECAY LOAD: Recent games (up to ~30 days) contribute fatigue with exponential decay.
+ * 2. TRAVEL LOAD: Cumulative travel with log scaling.
+ * 3. ROAD SEGMENT LOAD: Consecutive games away from home + coast-to-coast swings.
+ * 4. SCHEDULE STRESS: Multi-window density (6/7/12/15/30-day) vs NBA “tough slate” anchors.
+ * 5. MULTIPLIERS: Back-to-back, altitude, schedule stress (combined into densityMultiplier in DB).
+ * 6. FRESHNESS BONUS: Extended rest reduces fatigue.
+ * 7. OVERTIME: Prior-game OT adds flat fatigue.
  */
 
-import { differenceInCalendarDays, parseISO } from "date-fns";
+import { addDays, differenceInCalendarDays, parseISO, subDays } from "date-fns";
 import { haversineDistance } from "./haversine";
 
 // ─── Configuration ──────────────────────────────────────────────
-// These are tunable constants. After backtesting, you can adjust
-// them to improve prediction accuracy.
 
-/** How fast fatigue fades. Higher = fades faster. */
-const DECAY_RATE = 0.5;
+/** Must match `fetchRecentGamesForTeam` window. */
+export const FATIGUE_RECENT_LOOKBACK_DAYS = 30;
 
-/** How many days back we look for recent games. */
-const LOOKBACK_DAYS = 7;
+/** Decay includes games played on these calendar days before the target game. */
+const DECAY_LOOKBACK_DAYS = 30;
 
-/** Base fatigue cost of playing one game. */
-const GAME_BASE_COST = 3.0;
+const DECAY_RATE = 0.52;
 
-/** Scales travel distance into fatigue points. */
-const TRAVEL_SCALE = 1.8;
+const GAME_BASE_COST = 2.65;
 
-/** Reference distance for logarithmic scaling (miles). */
+const TRAVEL_SCALE = 1.75;
+
 const TRAVEL_REFERENCE_MILES = 1000;
 
-/** Extra fatigue multiplier when playing on consecutive days. */
-const B2B_MULTIPLIER = 1.4;
+const B2B_MULTIPLIER = 1.38;
 
-/** Fatigue multiplier for visiting altitude arenas (DEN, UTA). */
 const ALTITUDE_MULTIPLIER = 1.15;
 
-/** At what games-per-day ratio density kicks in. */
-const DENSITY_THRESHOLD = 0.5; // 3.5 games in 7 days = 0.5
-
-/** Maximum density multiplier. */
-const DENSITY_MAX_MULTIPLIER = 1.3;
-
-/** Max freshness bonus (for 3+ days rest). */
 const FRESHNESS_MAX_BONUS = -2.0;
 
-/** Days of rest where freshness bonus maxes out. */
 const FRESHNESS_PLATEAU_DAYS = 3;
 
-/** Extra fatigue when the team's most recent game went to overtime (one OT). */
 const OVERTIME_SINGLE_BONUS = 0.5;
 
-/** Extra fatigue when that game went to double overtime or beyond. */
 const OVERTIME_MULTI_BONUS = 1.0;
+
+/**
+ * Schedule stress anchors (games played in the last `days` calendar days before tip,
+ * not counting the game itself). `baseline` ≈ normal pace; `tough` ≈ elite compressed slate.
+ * Based on ~18-in-30, 8-in-12, 4-in-6 style NBA scheduling.
+ */
+const WINDOW_STRESS = [
+  { days: 30, tough: 18, baseline: 11 },
+  { days: 15, tough: 9, baseline: 6 },
+  { days: 12, tough: 8, baseline: 5 },
+  { days: 7, tough: 5, baseline: 3 },
+  { days: 6, tough: 4, baseline: 3 },
+] as const;
+
+const SCHEDULE_STRESS_MAX_MULT = 1.42;
+
+const SCHEDULE_STRESS_CURVE = 0.058;
+
+/** Consecutive away games (incl. tonight if away) before this kicks in. */
+const ROAD_STREAK_SOFT = 2;
+
+const ROAD_STREAK_PER_GAME = 0.34;
+
+const ROAD_COAST_TO_COAST_BONUS = 0.88;
+
+/** Min longitude spread (deg) on home + road venues to flag a coast swing. */
+const COAST_LON_SPREAD_DEG = 26;
+
+const SAME_ARENA_MILES = 1;
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -83,7 +82,6 @@ export interface RecentGame {
   opponentLat: number;
   opponentLon: number;
   opponentAltitudeFlag: boolean;
-  /** Count of overtime periods in this game (0 = regulation). */
   overtimePeriods: number;
 }
 
@@ -91,22 +89,131 @@ export interface FatigueResult {
   score: number;
   decayLoadScore: number;
   travelLoadScore: number;
+  roadSegmentLoadScore: number;
   backToBackMultiplier: number;
   altitudeMultiplier: number;
+  /** Combined schedule-stress multiplier (stored as density_multiplier in DB). */
   densityMultiplier: number;
   freshnessBonus: number;
-  /** Additive load from the prior game going to overtime (not multiplied). */
   overtimeFatigueBonus: number;
   gamesInLast7Days: number;
+  gamesInLast30Days: number;
+  /** Consecutive away games: includes tonight when `currentGameIsHome` is false. */
+  roadTripConsecutiveAway: number;
   travelDistanceMiles: number;
   isBackToBack: boolean;
   daysSinceLastGame: number | null;
-  /** True when `overtimeFatigueBonus` > 0 (prior game had OT). */
   isOvertimePenalty: boolean;
+  /** ≥3 games in some rolling 4-calendar-day window (ending before tip). */
+  isThreeInFour: boolean;
+  /** ≥4 games in some rolling 6-calendar-day window. */
+  isFourInSix: boolean;
+  /** Large east–west spread across home + road venues on the active / just-finished trip. */
+  hasCoastToCoastRoadSwing: boolean;
 }
 
-/** Arenas closer than this (miles) are treated as the same venue. */
-const SAME_ARENA_MILES = 1;
+// ─── Schedule / road helpers ───────────────────────────────────
+
+function countGamesInDaysBefore(
+  recentGames: RecentGame[],
+  gameDate: string,
+  days: number
+): number {
+  const tip = parseISO(gameDate);
+  const windowStart = subDays(tip, days);
+  return recentGames.filter((g) => {
+    const d = parseISO(g.date);
+    return d >= windowStart && d < tip;
+  }).length;
+}
+
+function sortedUniqueGameDates(recentGames: RecentGame[]): string[] {
+  return [...new Set(recentGames.map((g) => g.date))].sort();
+}
+
+/** Max games that fall in any contiguous `spanDays`-day calendar window (inclusive). */
+function maxGamesInRollingCalendarSpan(dates: string[], spanDays: number): number {
+  if (dates.length === 0) return 0;
+  const sorted = [...dates].sort();
+  let max = 0;
+  for (const firstStr of sorted) {
+    const first = parseISO(firstStr);
+    const lastInSpan = addDays(first, spanDays - 1);
+    const c = sorted.filter((ds) => {
+      const d = parseISO(ds);
+      return d >= first && d <= lastInSpan;
+    }).length;
+    if (c > max) max = c;
+  }
+  return max;
+}
+
+function computeIsThreeInFour(recentGames: RecentGame[]): boolean {
+  return maxGamesInRollingCalendarSpan(sortedUniqueGameDates(recentGames), 4) >= 3;
+}
+
+function computeIsFourInSix(recentGames: RecentGame[]): boolean {
+  return maxGamesInRollingCalendarSpan(sortedUniqueGameDates(recentGames), 6) >= 4;
+}
+
+function scheduleStressMultiplier(recentGames: RecentGame[], gameDate: string): number {
+  let stressPoints = 0;
+  for (const w of WINDOW_STRESS) {
+    const n = countGamesInDaysBefore(recentGames, gameDate, w.days);
+    if (n <= w.baseline) continue;
+    const denom = Math.max(1, w.tough - w.baseline);
+    const excess = (n - w.baseline) / denom;
+    stressPoints += Math.min(1.15, Math.max(0, excess));
+  }
+  const mult = 1 + Math.min(
+    SCHEDULE_STRESS_MAX_MULT - 1,
+    stressPoints * SCHEDULE_STRESS_CURVE
+  );
+  return Math.round(mult * 1000) / 1000;
+}
+
+/**
+ * Consecutive away games: walk back from most recent game; if tonight is away, add 1.
+ * Returns venue longitudes for those away games (not including tonight — caller adds current).
+ */
+function roadTripContext(
+  recentGames: RecentGame[],
+  currentGameIsHome: boolean,
+  currentVenueLon: number
+): { streak: number; awayVenueLons: number[] } {
+  const sorted = [...recentGames].sort((a, b) => a.date.localeCompare(b.date));
+  const awayVenueLons: number[] = [];
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    if (!sorted[i].isHome) {
+      awayVenueLons.push(sorted[i].opponentLon);
+    } else {
+      break;
+    }
+  }
+  let streak = awayVenueLons.length;
+  if (!currentGameIsHome) {
+    streak += 1;
+  }
+  return { streak, awayVenueLons };
+}
+
+function hasCoastToCoastSwing(teamHomeLon: number, venueLons: number[]): boolean {
+  if (venueLons.length === 0) return false;
+  const all = [teamHomeLon, ...venueLons];
+  const spread = Math.max(...all) - Math.min(...all);
+  return spread >= COAST_LON_SPREAD_DEG;
+}
+
+function roadSegmentLoad(
+  streak: number,
+  coast: boolean
+): { load: number; hasCoastToCoastRoadSwing: boolean } {
+  const loadFromStreak =
+    ROAD_STREAK_PER_GAME * Math.max(0, streak - ROAD_STREAK_SOFT);
+  const coastAdd = coast ? ROAD_COAST_TO_COAST_BONUS : 0;
+  const load = Math.round((loadFromStreak + coastAdd) * 100) / 100;
+  return { load, hasCoastToCoastRoadSwing: coast };
+}
 
 function calendarDaysBetween(earlierYmd: string, laterYmd: string): number {
   return differenceInCalendarDays(parseISO(laterYmd), parseISO(earlierYmd));
@@ -116,20 +223,6 @@ function isSameArena(lat1: number, lon1: number, lat2: number, lon2: number): bo
   return haversineDistance(lat1, lon1, lat2, lon2) < SAME_ARENA_MILES;
 }
 
-/**
- * Miles traveled from the end of the previous game to the start of the current game.
- *
- * When `previousGame` is null, the team is assumed to start at home before the first
- * game in the lookback window (no prior game in data).
- *
- * Rules:
- * - Home → home: 0
- * - Home → away: home city → away arena
- * - Away → home: previous away arena → home city
- * - Away → away: if gap is 2+ calendar days, assume fly home: (away → home) + (home → new away);
- *   if back-to-back or 1 day off, direct away → away.
- * - Same arena twice in a row: 0
- */
 function travelMilesBetweenGames(
   previousGame: RecentGame | null,
   currentGameIsHome: boolean,
@@ -178,19 +271,6 @@ function travelMilesBetweenGames(
 
 // ─── Core Algorithm ─────────────────────────────────────────────
 
-/**
- * Calculate the fatigue score for a team heading into a specific game.
- *
- * @param gameDate - The date of the game we're calculating fatigue for
- * @param recentGames - The team's games within the lookback window,
- *                      sorted by date ascending (oldest first)
- * @param isVisitingAltitude - Is the current game at an altitude arena (for this team)?
- * @param teamHomeLat - This team's home arena latitude
- * @param teamHomeLon - This team's home arena longitude
- * @param currentVenueLat - Latitude where the upcoming game is played
- * @param currentVenueLon - Longitude where the upcoming game is played
- * @param currentGameIsHome - True if this team is the home team in the upcoming game
- */
 export function calculateFatigue(
   gameDate: string,
   recentGames: RecentGame[],
@@ -201,56 +281,85 @@ export function calculateFatigue(
   currentVenueLon: number,
   currentGameIsHome: boolean
 ): FatigueResult {
-  const targetDate = new Date(gameDate);
+  const tip = parseISO(gameDate);
 
-  // ── No recent games → fully rested ──
+  const games7 = countGamesInDaysBefore(recentGames, gameDate, 7);
+  const games30 = countGamesInDaysBefore(recentGames, gameDate, 30);
+  const isThreeInFour = computeIsThreeInFour(recentGames);
+  const isFourInSix = computeIsFourInSix(recentGames);
+  const stressMult = scheduleStressMultiplier(recentGames, gameDate);
+
+  const { streak: roadStreak, awayVenueLons } = roadTripContext(
+    recentGames,
+    currentGameIsHome,
+    currentVenueLon
+  );
+  const venueLonsForCoast = currentGameIsHome
+    ? awayVenueLons
+    : [...awayVenueLons, currentVenueLon];
+  const coast = hasCoastToCoastSwing(teamHomeLon, venueLonsForCoast);
+  const { load: roadLoad, hasCoastToCoastRoadSwing } = roadSegmentLoad(roadStreak, coast);
+
   if (recentGames.length === 0) {
+    if (currentGameIsHome) {
+      return {
+        score: 0,
+        decayLoadScore: 0,
+        travelLoadScore: 0,
+        roadSegmentLoadScore: 0,
+        backToBackMultiplier: 1.0,
+        altitudeMultiplier: 1.0,
+        densityMultiplier: stressMult,
+        freshnessBonus: 0,
+        overtimeFatigueBonus: 0,
+        gamesInLast7Days: 0,
+        gamesInLast30Days: 0,
+        roadTripConsecutiveAway: 0,
+        travelDistanceMiles: 0,
+        isBackToBack: false,
+        daysSinceLastGame: null,
+        isOvertimePenalty: false,
+        isThreeInFour: false,
+        isFourInSix: false,
+        hasCoastToCoastRoadSwing: false,
+      };
+    }
+
+    const openerCoast = hasCoastToCoastSwing(teamHomeLon, [currentVenueLon]);
+    const openerRoad = roadSegmentLoad(1, openerCoast);
+
     return {
-      score: 0,
+      score: Math.max(0, openerRoad.load),
       decayLoadScore: 0,
       travelLoadScore: 0,
+      roadSegmentLoadScore: openerRoad.load,
       backToBackMultiplier: 1.0,
-      altitudeMultiplier: 1.0,
-      densityMultiplier: 1.0,
+      altitudeMultiplier: isVisitingAltitude ? ALTITUDE_MULTIPLIER : 1.0,
+      densityMultiplier: stressMult,
       freshnessBonus: 0,
       overtimeFatigueBonus: 0,
       gamesInLast7Days: 0,
+      gamesInLast30Days: 0,
+      roadTripConsecutiveAway: 1,
       travelDistanceMiles: 0,
       isBackToBack: false,
       daysSinceLastGame: null,
       isOvertimePenalty: false,
+      isThreeInFour: false,
+      isFourInSix: false,
+      hasCoastToCoastRoadSwing: openerRoad.hasCoastToCoastRoadSwing,
     };
   }
 
-  // ── 1. DECAY LOAD ──
-  // Each game contributes: BASE_COST × e^(-λ × daysAgo)
-  // Yesterday's game (daysAgo=1): 3.0 × e^(-0.5×1) = 1.82
-  // 3 days ago:                    3.0 × e^(-0.5×3) = 0.67
-  // 6 days ago:                    3.0 × e^(-0.5×6) = 0.15
   let decayLoadScore = 0;
-
   for (const game of recentGames) {
-    const gameDay = new Date(game.date);
-    const daysAgo = Math.max(
-      1,
-      Math.round(
-        (targetDate.getTime() - gameDay.getTime()) / (1000 * 60 * 60 * 24)
-      )
-    );
-
-    if (daysAgo <= LOOKBACK_DAYS) {
-      decayLoadScore += GAME_BASE_COST * Math.exp(-DECAY_RATE * daysAgo);
-    }
+    const daysAgo = differenceInCalendarDays(tip, parseISO(game.date));
+    if (daysAgo < 1 || daysAgo > DECAY_LOOKBACK_DAYS) continue;
+    decayLoadScore += GAME_BASE_COST * Math.exp(-DECAY_RATE * daysAgo);
   }
+  decayLoadScore = Math.round(decayLoadScore * 100) / 100;
 
-  const lastGame = recentGames[recentGames.length - 1];
-
-  // ── 2. TRAVEL LOAD ──
-  // Sum travel for each leg in the window (from assumed-at-home before the first game,
-  // then between consecutive games), then the leg into the upcoming game. See
-  // `travelMilesBetweenGames` for home/away and multi-day away-trip rules.
   let totalTravelMiles = 0;
-
   const first = recentGames[0];
   const firstArenaLat = first.isHome ? first.teamLat : first.opponentLat;
   const firstArenaLon = first.isHome ? first.teamLon : first.opponentLon;
@@ -281,6 +390,7 @@ export function calculateFatigue(
     );
   }
 
+  const lastGame = recentGames[recentGames.length - 1];
   const gapToCurrent = calendarDaysBetween(lastGame.date, gameDate);
   totalTravelMiles += travelMilesBetweenGames(
     lastGame,
@@ -292,54 +402,27 @@ export function calculateFatigue(
     gapToCurrent
   );
 
-  // Logarithmic scaling: log(1 + miles/reference)
   const travelLoadScore =
     totalTravelMiles > 0
-      ? TRAVEL_SCALE * Math.log(1 + totalTravelMiles / TRAVEL_REFERENCE_MILES)
+      ? Math.round(
+          TRAVEL_SCALE * Math.log(1 + totalTravelMiles / TRAVEL_REFERENCE_MILES) * 100
+        ) / 100
       : 0;
 
-  // ── 3. BACK-TO-BACK CHECK ──
-  const lastGameDate = new Date(lastGame.date);
-  const daysSinceLastGame = Math.round(
-    (targetDate.getTime() - lastGameDate.getTime()) / (1000 * 60 * 60 * 24)
-  );
+  const daysSinceLastGame = differenceInCalendarDays(tip, parseISO(lastGame.date));
   const isBackToBack = daysSinceLastGame === 1;
   const b2bMultiplier = isBackToBack ? B2B_MULTIPLIER : 1.0;
 
-  // ── 4. ALTITUDE CHECK ──
-  // Only applies to visiting teams at altitude arenas
   const altMultiplier = isVisitingAltitude ? ALTITUDE_MULTIPLIER : 1.0;
 
-  // ── 5. SCHEDULE DENSITY ──
-  // Ratio of games played to days in the window.
-  // 4 games in 7 days = 0.57 → above threshold → multiplier kicks in
-  const gamesInWindow = recentGames.length;
-  const density = gamesInWindow / LOOKBACK_DAYS;
-  let densityMultiplier = 1.0;
-
-  if (density > DENSITY_THRESHOLD) {
-    // Linear interpolation from 1.0 to DENSITY_MAX_MULTIPLIER
-    const overageRatio =
-      (density - DENSITY_THRESHOLD) / (1.0 - DENSITY_THRESHOLD);
-    densityMultiplier =
-      1.0 + overageRatio * (DENSITY_MAX_MULTIPLIER - 1.0);
-    densityMultiplier = Math.min(densityMultiplier, DENSITY_MAX_MULTIPLIER);
-  }
-
-  // ── 6. FRESHNESS BONUS ──
-  // If the team hasn't played in 3+ days, they get a recovery bonus.
-  // Uses inverse exponential: bonus = MAX × (1 - e^(-days/plateau))
-  // 3 days rest → about 63% of max bonus
-  // 5 days rest → about 81% of max bonus (diminishing returns)
   let freshnessBonus = 0;
-
   if (daysSinceLastGame >= FRESHNESS_PLATEAU_DAYS) {
     freshnessBonus =
       FRESHNESS_MAX_BONUS *
       (1 - Math.exp(-daysSinceLastGame / FRESHNESS_PLATEAU_DAYS));
+    freshnessBonus = Math.round(freshnessBonus * 100) / 100;
   }
 
-  // ── 7. OVERTIME (prior game only) ──
   const priorOtPeriods = Math.max(0, Math.floor(lastGame.overtimePeriods));
   let overtimeFatigueBonus = 0;
   if (priorOtPeriods >= 2) {
@@ -348,10 +431,9 @@ export function calculateFatigue(
     overtimeFatigueBonus = OVERTIME_SINGLE_BONUS;
   }
 
-  // ── FINAL SCORE ──
-  const baseLoad = decayLoadScore + travelLoadScore;
+  const baseLoad = decayLoadScore + travelLoadScore + roadLoad;
   const multipliedLoad =
-    baseLoad * b2bMultiplier * altMultiplier * densityMultiplier;
+    baseLoad * b2bMultiplier * altMultiplier * stressMult;
   const finalScore = Math.max(
     0,
     multipliedLoad + freshnessBonus + overtimeFatigueBonus
@@ -359,31 +441,30 @@ export function calculateFatigue(
 
   return {
     score: Math.round(finalScore * 100) / 100,
-    decayLoadScore: Math.round(decayLoadScore * 100) / 100,
-    travelLoadScore: Math.round(travelLoadScore * 100) / 100,
+    decayLoadScore,
+    travelLoadScore,
+    roadSegmentLoadScore: roadLoad,
     backToBackMultiplier: b2bMultiplier,
     altitudeMultiplier: altMultiplier,
-    densityMultiplier: Math.round(densityMultiplier * 100) / 100,
-    freshnessBonus: Math.round(freshnessBonus * 100) / 100,
+    densityMultiplier: stressMult,
+    freshnessBonus,
     overtimeFatigueBonus: Math.round(overtimeFatigueBonus * 100) / 100,
-    gamesInLast7Days: gamesInWindow,
+    gamesInLast7Days: games7,
+    gamesInLast30Days: games30,
+    roadTripConsecutiveAway: roadStreak,
     travelDistanceMiles: Math.round(totalTravelMiles),
     isBackToBack,
     daysSinceLastGame,
     isOvertimePenalty: overtimeFatigueBonus > 0,
+    isThreeInFour,
+    isFourInSix,
+    hasCoastToCoastRoadSwing,
   };
 }
 
-/**
- * Calculate the Rest Advantage for a matchup.
- * Positive = home team is more rested (advantage).
- * Negative = away team is more rested.
- */
 export function calculateRestAdvantage(
   homeFatigue: FatigueResult,
   awayFatigue: FatigueResult
 ): number {
-  // Away fatigue minus home fatigue
-  // If away team has score 8 and home has 3, RA = +5 (home advantage)
   return Math.round((awayFatigue.score - homeFatigue.score) * 100) / 100;
 }

@@ -28,6 +28,6 @@ test.describe("Analysis page", () => {
     const breakdownPcts = page.locator("div.rounded-3xl p.text-5xl").filter({ hasText: /%/ });
     await expect(breakdownPcts.first()).toBeVisible();
 
-    await expect(page.getByText("Monthly Win Rate Trend")).toBeVisible();
+    await expect(page.getByText("Win rate by season")).toBeVisible();
   });
 });

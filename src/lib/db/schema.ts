@@ -78,11 +78,17 @@ export const fatigueScores = pgTable(
 
     // Raw context (useful for debugging & frontend display)
     gamesInLast7Days: integer("games_in_last_7_days").notNull(),
+    gamesInLast30Days: integer("games_in_last_30_days").notNull().default(0),
     travelDistanceMiles: decimal("travel_distance_miles").notNull(),
     isBackToBack: boolean("is_back_to_back").notNull(),
     daysSinceLastGame: integer("days_since_last_game"),
     /** True when the prior game included overtime (extra fatigue load). */
     isOvertimePenalty: boolean("is_overtime_penalty").notNull().default(false),
+    /** Consecutive away games (includes tonight when the team is away). */
+    roadTripConsecutiveAway: integer("road_trip_consecutive_away").notNull().default(0),
+    isThreeInFour: boolean("is_three_in_four").notNull().default(false),
+    isFourInSix: boolean("is_four_in_six").notNull().default(false),
+    hasCoastToCoastRoadSwing: boolean("has_coast_to_coast_road_swing").notNull().default(false),
 
     computedAt: timestamp("computed_at").notNull().defaultNow(),
   },

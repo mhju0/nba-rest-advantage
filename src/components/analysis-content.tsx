@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   BarChart,
   Bar,
@@ -11,8 +11,6 @@ import {
   ResponsiveContainer,
   ReferenceLine,
   LabelList,
-  LineChart,
-  Line,
   Legend,
 } from "recharts"
 import type { TooltipContentProps } from "recharts"
@@ -71,254 +69,120 @@ function WinRateTooltip({ active, payload }: TooltipContentProps) {
   )
 }
 
-// ─── Monthly win rate by season (Oct–Apr multi-line chart) ───────
+type SeasonWinRateDatum = {
+  label: string
+  winPct: number
+  games: number
+  restedTeamWins: number
+}
 
-const MONTH_AXIS = ["Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr"] as const
-
-const SEASON_LINE_PALETTE = [
-  "#17408B",
-  "#2563EB",
-  "#3B82F6",
-  "#60A5FA",
-  "#93C5FD",
-  "#1E40AF",
-  "#0EA5E9",
-  "#64748B",
-  "#0F766E",
-  "#C9082A",
-]
-
-type MonthlySeasonChartRow = {
-  month: string
-  average: number | null
-  _avgGames: number
-  _gamesBySeason: Record<string, number>
-} & Record<string, number | null | string | Record<string, number> | undefined>
-
-function SeasonalMonthlyWinChart({ data }: { data: AnalysisResponse }) {
-  const seasonsDesc = useMemo(
-    () =>
-      [...data.monthlyWinRateBySeason]
-        .map((s) => s.season)
-        .sort((a, b) => b.localeCompare(a)),
-    [data.monthlyWinRateBySeason]
+function SeasonWinRateTooltip({ active, payload }: TooltipContentProps) {
+  if (!active || !payload?.length) return null
+  const d = payload[0].payload as SeasonWinRateDatum
+  return (
+    <div
+      className="rounded-xl border border-white/60 px-3 py-2 text-xs shadow-lg"
+      style={{ background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)" }}
+    >
+      <p className="font-semibold text-slate-800">{d.label}</p>
+      <p className="mt-0.5 text-[#17408B]">
+        Win rate: <span className="font-bold">{d.winPct}%</span>
+      </p>
+      <p className="text-slate-500">
+        {d.restedTeamWins.toLocaleString()} / {d.games.toLocaleString()} games (more-rested team won)
+      </p>
+    </div>
   )
+}
 
-  const [visibleSeasons, setVisibleSeasons] = useState<Set<string>>(() => new Set())
-  useEffect(() => {
-    setVisibleSeasons(new Set(data.monthlyWinRateBySeason.map((s) => s.season)))
-  }, [data])
-
-  const [legendHover, setLegendHover] = useState<string | null>(null)
-
-  const chartRows: MonthlySeasonChartRow[] = useMemo(() => {
-    return MONTH_AXIS.map((month) => {
-      const row: Record<string, unknown> = { month }
-      const gamesBySeason: Record<string, number> = {}
-      for (const s of data.monthlyWinRateBySeason) {
-        const pt = s.months.find((m) => m.label === month)
-        const g = pt?.games ?? 0
-        gamesBySeason[s.season] = g
-        row[s.season] = g >= 10 && pt ? pt.winPct : null
-      }
-      row._gamesBySeason = gamesBySeason
-      const pool = data.monthlyWinRatePooledByMonth.find((m) => m.label === month)
-      const ag = pool?.games ?? 0
-      row._avgGames = ag
-      row.average = ag >= 10 && pool ? pool.winPct : null
-      return row as MonthlySeasonChartRow
-    })
-  }, [data])
-
-  const colorBySeason = useMemo(() => {
-    const m = new Map<string, string>()
-    seasonsDesc.forEach((season, i) => {
-      m.set(season, SEASON_LINE_PALETTE[i % SEASON_LINE_PALETTE.length])
-    })
-    return m
-  }, [seasonsDesc])
-
-  const lineStrokeOpacity = useCallback(
-    (dataKey: string) => {
-      if (!legendHover) return 1
-      return legendHover === dataKey ? 1 : 0.2
-    },
-    [legendHover]
-  )
-
-  const toggleSeason = useCallback((season: string) => {
-    setVisibleSeasons((prev) => {
-      const next = new Set(prev)
-      if (next.has(season)) next.delete(season)
-      else next.add(season)
-      return next
-    })
-  }, [])
-
-  function SeasonTooltip({ active, payload, label }: TooltipContentProps) {
-    if (!active || !payload?.length) return null
-    const row = payload[0].payload as MonthlySeasonChartRow
-    const month = String(label)
-    const items = payload.filter((p) => p.value != null && typeof p.value === "number")
-    return (
-      <div
-        className="max-w-xs rounded-xl border border-white/60 bg-white/95 px-3 py-2 text-xs shadow-lg backdrop-blur-md"
-        style={{ WebkitBackdropFilter: "blur(8px)" }}
-      >
-        <p className="font-semibold text-slate-800">{month}</p>
-        {items.map((p) => {
-          const key = String(p.dataKey)
-          const isAvg = key === "average"
-          const seasonName = isAvg ? "Average (all seasons)" : key
-          const games = isAvg ? row._avgGames : row._gamesBySeason[key] ?? 0
-          return (
-            <p key={key} className="mt-1.5 leading-snug" style={{ color: p.color }}>
-              <span className="font-medium">{seasonName}</span>
-              {": "}
-              <span className="font-bold">{p.value}%</span>
-              <span className="text-slate-500"> · {games} games</span>
-            </p>
-          )
-        })}
-      </div>
-    )
-  }
+function SeasonWinRateBySeasonChart({ data }: { data: AnalysisResponse }) {
+  const chartData: SeasonWinRateDatum[] = data.seasonWinRates.map((s) => ({
+    label: s.season,
+    winPct: s.winPct,
+    games: s.games,
+    restedTeamWins: s.restedTeamWins,
+  }))
 
   return (
     <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-      <p className="text-sm font-semibold text-slate-800">Monthly Win Rate Trend</p>
+      <p className="text-sm font-semibold text-slate-800">Win rate by season</p>
       <p className="mt-0.5 text-xs text-slate-400">
-        Compare Oct–Apr patterns by season. Points with fewer than 10 games are omitted. The dashed
-        line is the pooled average across all seasons. Hover the legend to emphasize a series.
+        Each bar is the full regular-season sample (Oct–Apr dates) where |rest advantage| was at least
+        0.5 — useful as you add more seasons to see whether the edge is stable year to year.
       </p>
 
-      <div className="mt-4 flex flex-col gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-          Show seasons
-        </span>
-        <div className="flex flex-wrap gap-2">
-          {seasonsDesc.map((season) => {
-            const on = visibleSeasons.has(season)
-            return (
-              <button
-                key={season}
-                type="button"
-                aria-pressed={on}
-                onClick={() => toggleSeason(season)}
-                className={cn(
-                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                  on
-                    ? "border-[#17408B]/40 bg-[#17408B]/12 text-[#17408B] shadow-sm"
-                    : "border-white/55 bg-white/45 text-slate-400 line-through decoration-slate-300"
-                )}
+      <div className="mt-6 h-72 min-w-0">
+        {chartData.length === 0 ? (
+          <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200">
+            <p className="text-xs text-slate-400">No season-level data yet</p>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
+              <defs>
+                <linearGradient id="seasonWinGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#17408B" stopOpacity={1} />
+                  <stop offset="100%" stopColor="#17408B" stopOpacity={0.65} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid
+                vertical={false}
+                strokeDasharray="3 3"
+                stroke="rgba(0,0,0,0.06)"
+              />
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 10, fill: "#64748b" }}
+                tickLine={false}
+                axisLine={false}
+                interval={0}
+                angle={-32}
+                textAnchor="end"
+                height={52}
+              />
+              <YAxis
+                domain={[40, 70]}
+                tickFormatter={(v: number) => `${v}%`}
+                tick={{ fontSize: 11, fill: "#94a3b8" }}
+                tickLine={false}
+                axisLine={false}
+                width={40}
+              />
+              <Tooltip
+                cursor={{ fill: "rgba(23,64,139,0.06)" }}
+                content={(props: TooltipContentProps) => <SeasonWinRateTooltip {...props} />}
+              />
+              <ReferenceLine
+                y={50}
+                stroke="#C9082A"
+                strokeDasharray="4 4"
+                strokeOpacity={0.45}
+                label={{
+                  value: "Coin Flip",
+                  position: "insideTopRight",
+                  fontSize: 10,
+                  fill: "#C9082A",
+                  opacity: 0.7,
+                }}
+              />
+              <Bar
+                dataKey="winPct"
+                fill="url(#seasonWinGrad)"
+                radius={[6, 6, 0, 0]}
+                maxBarSize={48}
               >
-                {season}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      <div className="mt-6 h-80">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartRows} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-            <XAxis
-              dataKey="month"
-              tick={{ fontSize: 11, fill: "#64748b" }}
-              tickLine={false}
-              axisLine={false}
-            />
-            <YAxis
-              domain={[20, 90]}
-              tickFormatter={(v: number) => `${v}%`}
-              tick={{ fontSize: 11, fill: "#94a3b8" }}
-              tickLine={false}
-              axisLine={false}
-              width={40}
-            />
-            <Tooltip
-              cursor={{ stroke: "rgba(23,64,139,0.12)", strokeWidth: 1 }}
-              content={SeasonTooltip}
-            />
-            <ReferenceLine
-              y={50}
-              stroke="#C9082A"
-              strokeDasharray="4 4"
-              strokeOpacity={0.45}
-              label={{
-                value: "Coin Flip",
-                position: "insideTopRight",
-                fontSize: 10,
-                fill: "#C9082A",
-                opacity: 0.7,
-              }}
-            />
-            {seasonsDesc
-              .filter((season) => visibleSeasons.has(season))
-              .map((season) => (
-                <Line
-                  key={season}
-                  type="monotone"
-                  name={season}
-                  dataKey={season}
-                  stroke={colorBySeason.get(season) ?? "#17408B"}
-                  strokeWidth={2}
-                  strokeOpacity={lineStrokeOpacity(season)}
-                  connectNulls={false}
-                  dot={{ r: 3, strokeWidth: 0 }}
-                  activeDot={{ r: 5, strokeWidth: 2, stroke: "rgba(255,255,255,0.9)" }}
+                <LabelList
+                  dataKey="games"
+                  position="top"
+                  formatter={(v: string | number | boolean | null | undefined) =>
+                    typeof v === "number" ? `n=${v.toLocaleString()}` : ""
+                  }
+                  style={{ fontSize: "10px", fill: "#94a3b8" }}
                 />
-              ))}
-            <Line
-              type="monotone"
-              name="Average (all seasons)"
-              dataKey="average"
-              stroke="#0f172a"
-              strokeWidth={3}
-              strokeDasharray="10 6"
-              strokeOpacity={lineStrokeOpacity("average")}
-              connectNulls={false}
-              dot={{ r: 4, fill: "#0f172a", strokeWidth: 0 }}
-              activeDot={{ r: 6, strokeWidth: 2, stroke: "#fff" }}
-            />
-            <Legend
-              content={(legendProps) => {
-                const payload = legendProps.payload
-                if (!payload?.length) return null
-                return (
-                  <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-white/40 pt-3">
-                    {payload.map((entry) => {
-                      const key = String(entry.dataKey ?? "")
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          className={cn(
-                            "flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium transition-opacity",
-                            "text-slate-600 hover:bg-white/55"
-                          )}
-                          style={{
-                            opacity: legendHover && key !== legendHover ? 0.35 : 1,
-                          }}
-                          onMouseEnter={() => setLegendHover(key)}
-                          onMouseLeave={() => setLegendHover(null)}
-                        >
-                          <span
-                            className="size-2 shrink-0 rounded-full"
-                            style={{ backgroundColor: entry.color }}
-                            aria-hidden
-                          />
-                          {entry.value}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )
-              }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   )
@@ -375,7 +239,7 @@ const RA_OPTIONS = [
 ]
 
 const SEASONS = [
-  "2024-25", "2023-24", "2022-23", "2021-22", "2020-21",
+  "2025-26", "2024-25", "2023-24", "2022-23", "2021-22", "2020-21",
   "2018-19", "2017-18", "2016-17", "2015-16",
 ]
 
@@ -765,6 +629,19 @@ export function AnalysisContent() {
   )
   return (
     <div className="flex flex-col gap-6">
+      <p className="max-w-2xl text-sm leading-relaxed text-slate-500">
+        Historical backtest: among final regular-season games with fatigue data, did the more-rested
+        team win? This does not read stored prediction rows. For graded predictions and the remaining
+        schedule, use the{" "}
+        <a
+          href="/tracker"
+          className="font-medium text-[#17408B] underline-offset-2 hover:underline"
+        >
+          Prediction Tracker
+        </a>
+        .
+      </p>
+
       {/* ── 1. Hero stat ──────────────────────────────────────────── */}
       <div
         className="rounded-3xl border border-white/50 px-6 py-10 text-center"
@@ -869,7 +746,7 @@ export function AnalysisContent() {
               )}
               {hasSpreadData && (
                 <Legend
-                  formatter={(value) =>
+                  formatter={(value: string) =>
                     value === "winPct" ? "Win Rate" : "ATS Cover Rate"
                   }
                   iconType="circle"
@@ -925,8 +802,8 @@ export function AnalysisContent() {
         </div>
       </div>
 
-      {/* ── 4. Monthly trends — by season + pooled average ───────── */}
-      <SeasonalMonthlyWinChart data={data} />
+      {/* ── 4. Win rate by season ─────────────────────────────────── */}
+      <SeasonWinRateBySeasonChart data={data} />
 
       {/* ── 5. Key insight callout ────────────────────────────────── */}
       {ra5 && (

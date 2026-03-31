@@ -11,6 +11,7 @@ export const NBA_SEASONS = [
   "2022-23",
   "2023-24",
   "2024-25",
+  "2025-26",
 ] as const;
 
 export type NbaSeasonLabel = (typeof NBA_SEASONS)[number];

@@ -1,5 +1,4 @@
-import { format, parseISO, subDays } from "date-fns";
-import { and, asc, count, desc, eq, gte, isNotNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "./index";
 import { fatigueScores, games, predictions, teams } from "./schema";
@@ -12,43 +11,41 @@ import type { FatigueInfo, GameDateCount, GameResponse, RestAdvantage } from "@/
 
 const NEUTRAL_THRESHOLD = 0.5;
 
-/**
- * Counts games a team plays between `startDate` and `endDate` inclusive (YYYY-MM-DD).
- */
-async function countTeamGamesInDateRange(
-  teamId: number,
-  startDate: string,
-  endDate: string
-): Promise<number> {
-  const agg = await db
-    .select({ c: count() })
-    .from(games)
-    .where(
-      and(
-        gte(games.date, startDate),
-        lte(games.date, endDate),
-        or(eq(games.homeTeamId, teamId), eq(games.awayTeamId, teamId))
-      )
-    );
-  return Number(agg[0]?.c ?? 0);
+/** One fatigue row per (game, team), preferring the most recently computed. */
+function latestFatigueSubquery(alias: string) {
+  return db
+    .selectDistinctOn(
+      [fatigueScores.gameId, fatigueScores.teamId],
+      {
+        gameId: fatigueScores.gameId,
+        teamId: fatigueScores.teamId,
+        score: fatigueScores.score,
+        isBackToBack: fatigueScores.isBackToBack,
+        gamesInLast7Days: fatigueScores.gamesInLast7Days,
+        gamesInLast30Days: fatigueScores.gamesInLast30Days,
+        travelDistanceMiles: fatigueScores.travelDistanceMiles,
+        altitudeMultiplier: fatigueScores.altitudeMultiplier,
+        daysSinceLastGame: fatigueScores.daysSinceLastGame,
+        isOvertimePenalty: fatigueScores.isOvertimePenalty,
+        roadTripConsecutiveAway: fatigueScores.roadTripConsecutiveAway,
+        isThreeInFour: fatigueScores.isThreeInFour,
+        isFourInSix: fatigueScores.isFourInSix,
+        hasCoastToCoastRoadSwing: fatigueScores.hasCoastToCoastRoadSwing,
+      }
+    )
+    .from(fatigueScores)
+    .orderBy(fatigueScores.gameId, fatigueScores.teamId, desc(fatigueScores.computedAt))
+    .as(alias);
 }
 
 /**
- * True when the team is playing its 4th+ game in a 6-day window ending on `gameDate`.
+ * NBA regular-season calendar window (Oct 1 → Apr 30) for the season label on each row.
+ * Excludes May/June playoff dates that may be mis-tagged as regular in source data.
  */
-async function computeIs4In6Map(
-  gameDate: string,
-  teamIds: number[]
-): Promise<Map<number, boolean>> {
-  const start = format(subDays(parseISO(gameDate), 5), "yyyy-MM-dd");
-  const unique = [...new Set(teamIds)];
-  const out = new Map<number, boolean>();
-  for (const tid of unique) {
-    const n = await countTeamGamesInDateRange(tid, start, gameDate);
-    out.set(tid, n >= 4);
-  }
-  return out;
-}
+const gameDateWithinRegularSeasonCalendar = sql`
+  ${games.date} >= to_date(left(${games.season}, 4) || '-10-01', 'YYYY-MM-DD')
+  AND ${games.date} <= to_date((left(${games.season}, 4)::integer + 1)::text || '-04-30', 'YYYY-MM-DD')
+`;
 
 /**
  * Returns all games scheduled for a given date (YYYY-MM-DD), with full team
@@ -57,8 +54,8 @@ async function computeIs4In6Map(
 export async function getGamesByDate(date: string): Promise<GameResponse[]> {
   const homeTeam = alias(teams, "home_team");
   const awayTeam = alias(teams, "away_team");
-  const homeFatigue = alias(fatigueScores, "home_fatigue");
-  const awayFatigue = alias(fatigueScores, "away_fatigue");
+  const homeFatigue = latestFatigueSubquery("home_fatigue_latest");
+  const awayFatigue = latestFatigueSubquery("away_fatigue_latest");
 
   const rows = await db
     .select({
@@ -85,18 +82,28 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       homeFatigueScore: homeFatigue.score,
       homeIsBackToBack: homeFatigue.isBackToBack,
       homeGamesInLast7Days: homeFatigue.gamesInLast7Days,
+      homeGamesInLast30Days: homeFatigue.gamesInLast30Days,
       homeTravelDistanceMiles: homeFatigue.travelDistanceMiles,
       homeAltitudeMultiplier: homeFatigue.altitudeMultiplier,
       homeDaysSinceLastGame: homeFatigue.daysSinceLastGame,
       homeIsOvertimePenalty: homeFatigue.isOvertimePenalty,
+      homeRoadTripConsecutiveAway: homeFatigue.roadTripConsecutiveAway,
+      homeIsThreeInFour: homeFatigue.isThreeInFour,
+      homeIsFourInSix: homeFatigue.isFourInSix,
+      homeHasCoastToCoastRoadSwing: homeFatigue.hasCoastToCoastRoadSwing,
       // Away fatigue
       awayFatigueScore: awayFatigue.score,
       awayIsBackToBack: awayFatigue.isBackToBack,
       awayGamesInLast7Days: awayFatigue.gamesInLast7Days,
+      awayGamesInLast30Days: awayFatigue.gamesInLast30Days,
       awayTravelDistanceMiles: awayFatigue.travelDistanceMiles,
       awayAltitudeMultiplier: awayFatigue.altitudeMultiplier,
       awayDaysSinceLastGame: awayFatigue.daysSinceLastGame,
       awayIsOvertimePenalty: awayFatigue.isOvertimePenalty,
+      awayRoadTripConsecutiveAway: awayFatigue.roadTripConsecutiveAway,
+      awayIsThreeInFour: awayFatigue.isThreeInFour,
+      awayIsFourInSix: awayFatigue.isFourInSix,
+      awayHasCoastToCoastRoadSwing: awayFatigue.hasCoastToCoastRoadSwing,
     })
     .from(games)
     .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
@@ -111,23 +118,24 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
     )
     .where(and(eq(games.date, date), eq(games.gameType, "regular")));
 
-  const teamIds = rows.flatMap((r) => [r.homeTeamId, r.awayTeamId]);
-  const is4In6Map = await computeIs4In6Map(date, teamIds);
-
   return rows.map((row) => {
     const homeFatigueData = buildFatigueInfo(
       row.homeFatigueScore,
       row.homeIsBackToBack,
       row.homeGamesInLast7Days,
+      row.homeGamesInLast30Days,
       row.homeDaysSinceLastGame,
       row.homeTravelDistanceMiles,
       row.homeAltitudeMultiplier,
       row.homeIsOvertimePenalty,
+      row.homeIsThreeInFour,
+      row.homeIsFourInSix,
+      row.homeRoadTripConsecutiveAway,
+      row.homeHasCoastToCoastRoadSwing,
       {
         side: "home",
         homeTeamCity: row.homeTeamCity,
         homeAltitudeFlag: row.homeTeamAltitude,
-        is4In6: is4In6Map.get(row.homeTeamId) ?? false,
       }
     );
 
@@ -135,15 +143,19 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       row.awayFatigueScore,
       row.awayIsBackToBack,
       row.awayGamesInLast7Days,
+      row.awayGamesInLast30Days,
       row.awayDaysSinceLastGame,
       row.awayTravelDistanceMiles,
       row.awayAltitudeMultiplier,
       row.awayIsOvertimePenalty,
+      row.awayIsThreeInFour,
+      row.awayIsFourInSix,
+      row.awayRoadTripConsecutiveAway,
+      row.awayHasCoastToCoastRoadSwing,
       {
         side: "away",
         homeTeamCity: row.homeTeamCity,
         homeAltitudeFlag: row.homeTeamAltitude,
-        is4In6: is4In6Map.get(row.awayTeamId) ?? false,
       }
     );
 
@@ -233,8 +245,8 @@ type CompletedGameRow = {
  * Only the fields needed for analysis are selected to keep the payload lean.
  */
 export async function getCompletedGamesWithFatigue(): Promise<CompletedGameRow[]> {
-  const homeFatigue = alias(fatigueScores, "home_fatigue");
-  const awayFatigue = alias(fatigueScores, "away_fatigue");
+  const homeFatigue = latestFatigueSubquery("home_fatigue_latest");
+  const awayFatigue = latestFatigueSubquery("away_fatigue_latest");
 
   return db
     .select({
@@ -260,7 +272,8 @@ export async function getCompletedGamesWithFatigue(): Promise<CompletedGameRow[]
         eq(games.status, "final"),
         eq(games.gameType, "regular"),
         isNotNull(games.homeScore),
-        isNotNull(games.awayScore)
+        isNotNull(games.awayScore),
+        gameDateWithinRegularSeasonCalendar
       )
     );
 }
@@ -269,6 +282,7 @@ export async function getCompletedGamesWithFatigue(): Promise<CompletedGameRow[]
 
 type ResolvedPredictionRow = {
   date: string;
+  season: string;
   predictedAdvantageTeamId: number;
   actualWinnerId: number;
   differential: string;
@@ -294,12 +308,25 @@ export async function getResolvedPredictions(): Promise<ResolvedPredictionRow[]>
   const predictedTeam = alias(teams, "pt");
   const actualWinnerTeam = alias(teams, "awt");
 
-  const rows = await db
-    .select({
-      date: games.date,
+  const latestResolved = db
+    .selectDistinctOn([predictions.gameId], {
+      gameId: predictions.gameId,
       predictedAdvantageTeamId: predictions.predictedAdvantageTeamId,
       actualWinnerId: predictions.actualWinnerId,
       differential: predictions.restAdvantageDifferential,
+    })
+    .from(predictions)
+    .where(isNotNull(predictions.actualWinnerId))
+    .orderBy(predictions.gameId, desc(predictions.createdAt))
+    .as("latest_resolved_pred");
+
+  const rows = await db
+    .select({
+      date: games.date,
+      season: games.season,
+      predictedAdvantageTeamId: latestResolved.predictedAdvantageTeamId,
+      actualWinnerId: latestResolved.actualWinnerId,
+      differential: latestResolved.differential,
       homeTeamId: games.homeTeamId,
       homeTeamName: homeTeam.name,
       homeTeamAbbreviation: homeTeam.abbreviation,
@@ -311,23 +338,99 @@ export async function getResolvedPredictions(): Promise<ResolvedPredictionRow[]>
       actualWinnerName: actualWinnerTeam.name,
       actualWinnerAbbreviation: actualWinnerTeam.abbreviation,
     })
-    .from(predictions)
-    .innerJoin(games, eq(predictions.gameId, games.id))
+    .from(latestResolved)
+    .innerJoin(games, eq(games.id, latestResolved.gameId))
     .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
     .innerJoin(awayTeam, eq(games.awayTeamId, awayTeam.id))
-    .innerJoin(predictedTeam, eq(predictions.predictedAdvantageTeamId, predictedTeam.id))
-    .innerJoin(actualWinnerTeam, eq(predictions.actualWinnerId, actualWinnerTeam.id))
+    .innerJoin(
+      predictedTeam,
+      eq(latestResolved.predictedAdvantageTeamId, predictedTeam.id)
+    )
+    .innerJoin(
+      actualWinnerTeam,
+      eq(latestResolved.actualWinnerId, actualWinnerTeam.id)
+    )
     .where(
       and(
-        isNotNull(predictions.actualWinnerId),
-        eq(games.gameType, "regular")
+        eq(games.gameType, "regular"),
+        gameDateWithinRegularSeasonCalendar
       )
     )
-    .orderBy(games.date, predictions.createdAt);
+    .orderBy(games.date);
 
   // The INNER JOIN on actualWinnerTeam ensures actualWinnerId is non-null,
   // but Drizzle can't narrow the type from a JOIN condition alone.
   return rows as ResolvedPredictionRow[];
+}
+
+export type UpcomingPredictionRow = {
+  gameId: number;
+  date: string;
+  homeTeamAbbreviation: string;
+  awayTeamAbbreviation: string;
+  predictedTeamAbbreviation: string;
+  differential: string;
+};
+
+/**
+ * Open predictions for a season (not yet graded), scheduled games on/after `fromDateYmd`.
+ * One row per game (latest prediction row if duplicates exist).
+ */
+export async function getUpcomingPredictionsForSeason(
+  season: string,
+  fromDateYmd: string
+): Promise<UpcomingPredictionRow[]> {
+  const homeTeam = alias(teams, "ht");
+  const awayTeam = alias(teams, "at");
+  const predictedTeam = alias(teams, "pt");
+
+  const latestOpen = db
+    .selectDistinctOn([predictions.gameId], {
+      gameId: predictions.gameId,
+      predictedAdvantageTeamId: predictions.predictedAdvantageTeamId,
+      differential: predictions.restAdvantageDifferential,
+    })
+    .from(predictions)
+    .where(isNull(predictions.actualWinnerId))
+    .orderBy(predictions.gameId, desc(predictions.createdAt))
+    .as("latest_open_pred");
+
+  const rows = await db
+    .select({
+      gameId: games.id,
+      date: games.date,
+      homeTeamAbbreviation: homeTeam.abbreviation,
+      awayTeamAbbreviation: awayTeam.abbreviation,
+      predictedTeamAbbreviation: predictedTeam.abbreviation,
+      differential: latestOpen.differential,
+    })
+    .from(latestOpen)
+    .innerJoin(games, eq(games.id, latestOpen.gameId))
+    .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
+    .innerJoin(awayTeam, eq(games.awayTeamId, awayTeam.id))
+    .innerJoin(
+      predictedTeam,
+      eq(latestOpen.predictedAdvantageTeamId, predictedTeam.id)
+    )
+    .where(
+      and(
+        eq(games.season, season),
+        eq(games.gameType, "regular"),
+        eq(games.status, "scheduled"),
+        gte(games.date, fromDateYmd),
+        gameDateWithinRegularSeasonCalendar
+      )
+    )
+    .orderBy(asc(games.date), asc(games.id));
+
+  return rows.map((r) => ({
+    gameId: r.gameId,
+    date: String(r.date),
+    homeTeamAbbreviation: r.homeTeamAbbreviation,
+    awayTeamAbbreviation: r.awayTeamAbbreviation,
+    predictedTeamAbbreviation: r.predictedTeamAbbreviation,
+    differential: String(r.differential),
+  }));
 }
 
 // ─── Game search query ────────────────────────────────────────────
@@ -357,8 +460,8 @@ type SearchRow = {
 export async function searchRegularSeasonGames(filters: SearchFilters): Promise<SearchRow[]> {
   const homeTeam = alias(teams, "home_team");
   const awayTeam = alias(teams, "away_team");
-  const homeFatigue = alias(fatigueScores, "home_fatigue");
-  const awayFatigue = alias(fatigueScores, "away_fatigue");
+  const homeFatigue = latestFatigueSubquery("home_fatigue_latest");
+  const awayFatigue = latestFatigueSubquery("away_fatigue_latest");
 
   // Build conditions array — always filter to regular season final games
   const conditions = [
@@ -366,6 +469,7 @@ export async function searchRegularSeasonGames(filters: SearchFilters): Promise<
     eq(games.gameType, "regular"),
     isNotNull(games.homeScore),
     isNotNull(games.awayScore),
+    gameDateWithinRegularSeasonCalendar,
   ];
 
   if (filters.season) {
@@ -419,7 +523,6 @@ type FatigueInfoContext = {
   side: "home" | "away";
   homeTeamCity: string;
   homeAltitudeFlag: boolean;
-  is4In6: boolean;
 };
 
 /** Builds a FatigueInfo object from raw DB columns, or returns null if no fatigue data exists. */
@@ -427,17 +530,18 @@ function buildFatigueInfo(
   score: string | null,
   isBackToBack: boolean | null,
   gamesInLast7Days: number | null,
+  gamesInLast30Days: number | null,
   daysSinceLastGame: number | null,
   travelDistanceMiles: string | null,
   altitudeMultiplier: string | null,
   isOvertimePenalty: boolean | null,
+  isThreeInFour: boolean | null,
+  isFourInSix: boolean | null,
+  roadTripConsecutiveAway: number | null,
+  hasCoastToCoastRoadSwing: boolean | null,
   ctx: FatigueInfoContext
 ): FatigueInfo | null {
   if (score === null) return null;
-
-  // is3In4: approximate — 3+ games in last 7 days while still within 2 days of last game
-  const is3In4 =
-    (gamesInLast7Days ?? 0) >= 3 && daysSinceLastGame !== null && daysSinceLastGame <= 2;
 
   const altitudePenalty = parseFloat(altitudeMultiplier ?? "1") > 1.0;
   const altitudeArenaLabel =
@@ -448,14 +552,17 @@ function buildFatigueInfo(
   return {
     score: parseFloat(score),
     isBackToBack: isBackToBack ?? false,
-    is3In4,
+    is3In4: isThreeInFour ?? false,
     travelDistanceMiles: parseFloat(travelDistanceMiles ?? "0"),
     altitudePenalty,
     altitudeArenaLabel,
     daysRest: daysSinceLastGame,
     gamesInLast7Days: gamesInLast7Days ?? 0,
-    is4In6: ctx.is4In6,
+    gamesInLast30Days: gamesInLast30Days ?? 0,
+    is4In6: isFourInSix ?? false,
     isOvertimePenalty: isOvertimePenalty ?? false,
+    roadTripConsecutiveAway: roadTripConsecutiveAway ?? 0,
+    hasCoastToCoastRoadSwing: hasCoastToCoastRoadSwing ?? false,
   };
 }
 
