@@ -1,17 +1,21 @@
 /**
- * Fatigue backfill script — recomputes fatigue_scores for all (or a range of) games.
+ * Fatigue backfill script — computes fatigue_scores for games that are missing them.
  *
- * Applies the playoff/finals fatigue multiplier introduced in Part 5.
- * Safe to run multiple times — deletes and recreates fatigue_scores for each processed date.
+ * Only processes games that do NOT already have a fatigue_scores entry for the home team,
+ * so it is safe to run multiple times without reprocessing already-scored games.
+ *
+ * Applies the playoff/finals fatigue multiplier based on the game_type column.
+ * Processes games in chronological order (oldest first) since fatigue depends on prior games.
  *
  * Usage:
- *   pnpm exec tsx scripts/backfill_fatigue.ts                      # all dates
- *   pnpm exec tsx scripts/backfill_fatigue.ts 2022-10-01 2023-06-30 # date range
+ *   pnpm exec tsx scripts/backfill_fatigue.ts                      # all unscored games
+ *   pnpm exec tsx scripts/backfill_fatigue.ts 2022-10-01 2023-06-30 # optional date range
  *
- * Typical runtime: ~5–10 minutes for 4 seasons (~6 000 games).
+ * Typical runtime: ~15–25 minutes for 9 seasons (~10 000+ games).
  */
 
-import { and, asc, between, eq, inArray } from "drizzle-orm";
+import { and, asc, between, eq, isNull } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as Schema from "@/lib/db/schema";
 import { fatigueScores, games, teams } from "@/lib/db/schema";
@@ -39,8 +43,16 @@ async function main(): Promise<void> {
   const teamRows = await appDb.select().from(teams);
   const teamById = new Map(teamRows.map((t) => [t.id, t]));
 
-  // ── Fetch games in range (or all) ────────────────────────────────
-  const gameQuery = appDb
+  // ── Fetch only games missing fatigue scores ──────────────────────
+  // Left-join on the home team's fatigue entry; NULL means not yet computed.
+  const homeFatigue = alias(fatigueScores, "home_fatigue");
+
+  const whereClause =
+    startArg && endArg
+      ? and(isNull(homeFatigue.id), between(games.date, startArg, endArg))
+      : isNull(homeFatigue.id);
+
+  const ungradedGames = await appDb
     .select({
       id: games.id,
       externalId: games.externalId,
@@ -49,52 +61,36 @@ async function main(): Promise<void> {
       awayTeamId: games.awayTeamId,
     })
     .from(games)
-    .$dynamic();
+    .leftJoin(
+      homeFatigue,
+      and(eq(homeFatigue.gameId, games.id), eq(homeFatigue.teamId, games.homeTeamId))
+    )
+    .where(whereClause)
+    .orderBy(asc(games.date));
 
-  const allGames =
-    startArg && endArg
-      ? await gameQuery
-          .where(between(games.date, startArg, endArg))
-          .orderBy(asc(games.date))
-      : await gameQuery.orderBy(asc(games.date));
-
-  if (allGames.length === 0) {
-    console.log("No games found for the given range.");
+  if (ungradedGames.length === 0) {
+    console.log("No games are missing fatigue scores. Nothing to do.");
     return;
   }
 
-  console.log(`Processing fatigue for ${allGames.length} games...`);
+  console.log(`Found ${ungradedGames.length} games without fatigue scores. Starting backfill...`);
 
-  // ── Group by date so we can delete fatigue per-date batch ────────
-  const byDate = new Map<string, typeof allGames>();
-  for (const g of allGames) {
-    const dateStr = String(g.date);
-    const list = byDate.get(dateStr) ?? [];
-    list.push(g);
-    byDate.set(dateStr, list);
-  }
-
-  const sortedDates = Array.from(byDate.keys()).sort();
+  let gamesProcessed = 0;
   let totalRows = 0;
-  let datesProcessed = 0;
+  let errorCount = 0;
 
-  for (const dateStr of sortedDates) {
-    const dayGames = byDate.get(dateStr)!;
-    const gameIds = dayGames.map((g) => g.id);
-
-    // Delete existing fatigue scores for this date's games
-    await appDb
-      .delete(fatigueScores)
-      .where(inArray(fatigueScores.gameId, gameIds));
-
-    for (const game of dayGames) {
+  for (const game of ungradedGames) {
+    try {
       const home = teamById.get(game.homeTeamId);
       const away = teamById.get(game.awayTeamId);
       if (!home || !away) {
-        console.warn(`skip game ${game.id}: missing team`);
+        console.warn(`  [SKIP] game ${game.id} (${game.date}): missing team record`);
+        errorCount++;
+        gamesProcessed++;
         continue;
       }
 
+      const dateStr = String(game.date);
       const homeLat = parseFloat(home.latitude);
       const homeLon = parseFloat(home.longitude);
       const visitingAltitudeAway = home.altitudeFlag === true;
@@ -114,12 +110,12 @@ async function main(): Promise<void> {
       // Apply playoff/finals multiplier to the stored score
       const multiplier = getSeasonTypeMultiplier(String(game.externalId), dateStr);
 
-      const rows: Array<{ teamId: number; result: typeof homeResult }> = [
+      const entries: Array<{ teamId: number; result: typeof homeResult }> = [
         { teamId: game.homeTeamId, result: homeResult },
         { teamId: game.awayTeamId, result: awayResult },
       ];
 
-      for (const { teamId, result: r } of rows) {
+      for (const { teamId, result: r } of entries) {
         const adjustedScore = Math.round(r.score * multiplier * 100) / 100;
         await appDb.insert(fatigueScores).values({
           gameId: game.id,
@@ -139,18 +135,21 @@ async function main(): Promise<void> {
         });
         totalRows++;
       }
+    } catch (err) {
+      console.error(`  [ERROR] game ${game.id} (${game.date}):`, err);
+      errorCount++;
     }
 
-    datesProcessed++;
-    if (datesProcessed % 20 === 0) {
+    gamesProcessed++;
+    if (gamesProcessed % 100 === 0) {
       console.log(
-        `  ${datesProcessed}/${sortedDates.length} dates done (${totalRows} fatigue rows written)`
+        `  ${gamesProcessed}/${ungradedGames.length} games processed (${totalRows} fatigue rows written, ${errorCount} errors)`
       );
     }
   }
 
   console.log(
-    `\nBackfill complete: ${datesProcessed} dates, ${totalRows} fatigue rows written.`
+    `\nBackfill complete: ${gamesProcessed} games processed, ${totalRows} fatigue rows written, ${errorCount} errors.`
   );
 }
 
