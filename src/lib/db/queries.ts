@@ -1,4 +1,5 @@
-import { and, asc, count, desc, eq, gte, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { format, parseISO, subDays } from "date-fns";
+import { and, asc, count, desc, eq, gte, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "./index";
 import { fatigueScores, games, predictions, teams } from "./schema";
@@ -22,15 +23,10 @@ function latestFatigueSubquery(alias: string) {
         score: fatigueScores.score,
         isBackToBack: fatigueScores.isBackToBack,
         gamesInLast7Days: fatigueScores.gamesInLast7Days,
-        gamesInLast30Days: fatigueScores.gamesInLast30Days,
         travelDistanceMiles: fatigueScores.travelDistanceMiles,
         altitudeMultiplier: fatigueScores.altitudeMultiplier,
         daysSinceLastGame: fatigueScores.daysSinceLastGame,
         isOvertimePenalty: fatigueScores.isOvertimePenalty,
-        roadTripConsecutiveAway: fatigueScores.roadTripConsecutiveAway,
-        isThreeInFour: fatigueScores.isThreeInFour,
-        isFourInSix: fatigueScores.isFourInSix,
-        hasCoastToCoastRoadSwing: fatigueScores.hasCoastToCoastRoadSwing,
       }
     )
     .from(fatigueScores)
@@ -46,6 +42,53 @@ const gameDateWithinRegularSeasonCalendar = sql`
   ${games.date} >= to_date(left(${games.season}, 4) || '-10-01', 'YYYY-MM-DD')
   AND ${games.date} <= to_date((left(${games.season}, 4)::integer + 1)::text || '-04-30', 'YYYY-MM-DD')
 `;
+
+/**
+ * Games a team played in the `days` calendar days before `gameDateYmd` (exclusive of game day).
+ */
+async function countTeamGamesInDaysBefore(
+  teamId: number,
+  gameDateYmd: string,
+  days: number
+): Promise<number> {
+  const tip = parseISO(gameDateYmd);
+  const start = format(subDays(tip, days), "yyyy-MM-dd");
+  const agg = await db
+    .select({ c: count() })
+    .from(games)
+    .where(
+      and(
+        or(eq(games.homeTeamId, teamId), eq(games.awayTeamId, teamId)),
+        gte(games.date, start),
+        lt(games.date, gameDateYmd)
+      )
+    );
+  return Number(agg[0]?.c ?? 0);
+}
+
+/** True when the team plays its 4th+ game in a rolling 6-day window ending on `gameDate`. */
+async function computeIs4In6Map(
+  gameDate: string,
+  teamIds: number[]
+): Promise<Map<number, boolean>> {
+  const start = format(subDays(parseISO(gameDate), 5), "yyyy-MM-dd");
+  const unique = [...new Set(teamIds)];
+  const out = new Map<number, boolean>();
+  for (const tid of unique) {
+    const n = await db
+      .select({ c: count() })
+      .from(games)
+      .where(
+        and(
+          or(eq(games.homeTeamId, tid), eq(games.awayTeamId, tid)),
+          gte(games.date, start),
+          lte(games.date, gameDate)
+        )
+      );
+    out.set(tid, Number(n[0]?.c ?? 0) >= 4);
+  }
+  return out;
+}
 
 /**
  * Returns all games scheduled for a given date (YYYY-MM-DD), with full team
@@ -82,28 +125,18 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       homeFatigueScore: homeFatigue.score,
       homeIsBackToBack: homeFatigue.isBackToBack,
       homeGamesInLast7Days: homeFatigue.gamesInLast7Days,
-      homeGamesInLast30Days: homeFatigue.gamesInLast30Days,
       homeTravelDistanceMiles: homeFatigue.travelDistanceMiles,
       homeAltitudeMultiplier: homeFatigue.altitudeMultiplier,
       homeDaysSinceLastGame: homeFatigue.daysSinceLastGame,
       homeIsOvertimePenalty: homeFatigue.isOvertimePenalty,
-      homeRoadTripConsecutiveAway: homeFatigue.roadTripConsecutiveAway,
-      homeIsThreeInFour: homeFatigue.isThreeInFour,
-      homeIsFourInSix: homeFatigue.isFourInSix,
-      homeHasCoastToCoastRoadSwing: homeFatigue.hasCoastToCoastRoadSwing,
       // Away fatigue
       awayFatigueScore: awayFatigue.score,
       awayIsBackToBack: awayFatigue.isBackToBack,
       awayGamesInLast7Days: awayFatigue.gamesInLast7Days,
-      awayGamesInLast30Days: awayFatigue.gamesInLast30Days,
       awayTravelDistanceMiles: awayFatigue.travelDistanceMiles,
       awayAltitudeMultiplier: awayFatigue.altitudeMultiplier,
       awayDaysSinceLastGame: awayFatigue.daysSinceLastGame,
       awayIsOvertimePenalty: awayFatigue.isOvertimePenalty,
-      awayRoadTripConsecutiveAway: awayFatigue.roadTripConsecutiveAway,
-      awayIsThreeInFour: awayFatigue.isThreeInFour,
-      awayIsFourInSix: awayFatigue.isFourInSix,
-      awayHasCoastToCoastRoadSwing: awayFatigue.hasCoastToCoastRoadSwing,
     })
     .from(games)
     .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
@@ -118,20 +151,36 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
     )
     .where(and(eq(games.date, date), eq(games.gameType, "regular")));
 
+  const teamIds = rows.flatMap((r) => [r.homeTeamId, r.awayTeamId]);
+  const uniqueTeamIds = [...new Set(teamIds)];
+  const [is4In6Map, games30Map] = await Promise.all([
+    computeIs4In6Map(date, teamIds),
+    (async () => {
+      const m = new Map<number, number>();
+      await Promise.all(
+        uniqueTeamIds.map(async (tid) => {
+          m.set(tid, await countTeamGamesInDaysBefore(tid, date, 30));
+        })
+      );
+      return m;
+    })(),
+  ]);
+
   return rows.map((row) => {
     const homeFatigueData = buildFatigueInfo(
       row.homeFatigueScore,
       row.homeIsBackToBack,
       row.homeGamesInLast7Days,
-      row.homeGamesInLast30Days,
       row.homeDaysSinceLastGame,
       row.homeTravelDistanceMiles,
       row.homeAltitudeMultiplier,
       row.homeIsOvertimePenalty,
-      row.homeIsThreeInFour,
-      row.homeIsFourInSix,
-      row.homeRoadTripConsecutiveAway,
-      row.homeHasCoastToCoastRoadSwing,
+      {
+        gamesInLast30Days: games30Map.get(row.homeTeamId) ?? 0,
+        is4In6: is4In6Map.get(row.homeTeamId) ?? false,
+        roadTripConsecutiveAway: 0,
+        hasCoastToCoastRoadSwing: false,
+      },
       {
         side: "home",
         homeTeamCity: row.homeTeamCity,
@@ -143,15 +192,16 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       row.awayFatigueScore,
       row.awayIsBackToBack,
       row.awayGamesInLast7Days,
-      row.awayGamesInLast30Days,
       row.awayDaysSinceLastGame,
       row.awayTravelDistanceMiles,
       row.awayAltitudeMultiplier,
       row.awayIsOvertimePenalty,
-      row.awayIsThreeInFour,
-      row.awayIsFourInSix,
-      row.awayRoadTripConsecutiveAway,
-      row.awayHasCoastToCoastRoadSwing,
+      {
+        gamesInLast30Days: games30Map.get(row.awayTeamId) ?? 0,
+        is4In6: is4In6Map.get(row.awayTeamId) ?? false,
+        roadTripConsecutiveAway: 0,
+        hasCoastToCoastRoadSwing: false,
+      },
       {
         side: "away",
         homeTeamCity: row.homeTeamCity,
@@ -525,23 +575,31 @@ type FatigueInfoContext = {
   homeAltitudeFlag: boolean;
 };
 
+type FatigueScheduleExtras = {
+  gamesInLast30Days: number;
+  is4In6: boolean;
+  roadTripConsecutiveAway: number;
+  hasCoastToCoastRoadSwing: boolean;
+};
+
 /** Builds a FatigueInfo object from raw DB columns, or returns null if no fatigue data exists. */
 function buildFatigueInfo(
   score: string | null,
   isBackToBack: boolean | null,
   gamesInLast7Days: number | null,
-  gamesInLast30Days: number | null,
   daysSinceLastGame: number | null,
   travelDistanceMiles: string | null,
   altitudeMultiplier: string | null,
   isOvertimePenalty: boolean | null,
-  isThreeInFour: boolean | null,
-  isFourInSix: boolean | null,
-  roadTripConsecutiveAway: number | null,
-  hasCoastToCoastRoadSwing: boolean | null,
+  extras: FatigueScheduleExtras,
   ctx: FatigueInfoContext
 ): FatigueInfo | null {
   if (score === null) return null;
+
+  const g7 = gamesInLast7Days ?? 0;
+  const dRest = daysSinceLastGame;
+  const is3In4Approx =
+    g7 >= 3 && dRest !== null && dRest <= 2;
 
   const altitudePenalty = parseFloat(altitudeMultiplier ?? "1") > 1.0;
   const altitudeArenaLabel =
@@ -552,17 +610,17 @@ function buildFatigueInfo(
   return {
     score: parseFloat(score),
     isBackToBack: isBackToBack ?? false,
-    is3In4: isThreeInFour ?? false,
+    is3In4: is3In4Approx,
     travelDistanceMiles: parseFloat(travelDistanceMiles ?? "0"),
     altitudePenalty,
     altitudeArenaLabel,
     daysRest: daysSinceLastGame,
-    gamesInLast7Days: gamesInLast7Days ?? 0,
-    gamesInLast30Days: gamesInLast30Days ?? 0,
-    is4In6: isFourInSix ?? false,
+    gamesInLast7Days: g7,
+    gamesInLast30Days: extras.gamesInLast30Days,
+    is4In6: extras.is4In6,
     isOvertimePenalty: isOvertimePenalty ?? false,
-    roadTripConsecutiveAway: roadTripConsecutiveAway ?? 0,
-    hasCoastToCoastRoadSwing: hasCoastToCoastRoadSwing ?? false,
+    roadTripConsecutiveAway: extras.roadTripConsecutiveAway,
+    hasCoastToCoastRoadSwing: extras.hasCoastToCoastRoadSwing,
   };
 }
 

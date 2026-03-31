@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseBrowser } from "@/lib/supabase";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 /** Partial game update from the Realtime subscription. */
@@ -24,6 +24,9 @@ export function useLiveGames(gameIds: number[]) {
 
   useEffect(() => {
     if (gameIds.length === 0) return;
+
+    const supabase = getSupabaseBrowser();
+    if (!supabase) return;
 
     // Reset updates when game IDs change
     setLiveUpdates({});
