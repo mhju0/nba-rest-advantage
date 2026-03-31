@@ -9,6 +9,10 @@ export interface FatigueInfo {
   score: number;
   isBackToBack: boolean;
   is3In4: boolean;
+  /**
+   * Sum of modeled flight legs in the travel window (7 calendar days before this game,
+   * not counting game day), per `calculateFatigue` — not “days traveling.”
+   */
   travelDistanceMiles: number;
   altitudePenalty: boolean;
   /** When altitude applies (away at DEN/UTA), human-readable arena context. */

@@ -1,7 +1,20 @@
 import { endOfMonth, format, startOfMonth } from "date-fns";
 
-/** Seasons present in the seeded DB (2019-20 bubble omitted). */
+/**
+ * Seasons the app and ingest pipeline support (2019-20 bubble omitted).
+ * Oldest → newest for stable sort; UI often reverses for “latest first” dropdowns.
+ */
 export const NBA_SEASONS = [
+  "2005-06",
+  "2006-07",
+  "2007-08",
+  "2008-09",
+  "2009-10",
+  "2010-11",
+  "2011-12",
+  "2012-13",
+  "2013-14",
+  "2014-15",
   "2015-16",
   "2016-17",
   "2017-18",

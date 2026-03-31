@@ -27,6 +27,8 @@ function latestFatigueSubquery(alias: string) {
         altitudeMultiplier: fatigueScores.altitudeMultiplier,
         daysSinceLastGame: fatigueScores.daysSinceLastGame,
         isOvertimePenalty: fatigueScores.isOvertimePenalty,
+        roadTripConsecutiveAway: fatigueScores.roadTripConsecutiveAway,
+        hasCoastToCoastRoadSwing: fatigueScores.hasCoastToCoastRoadSwing,
       }
     )
     .from(fatigueScores)
@@ -129,6 +131,8 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       homeAltitudeMultiplier: homeFatigue.altitudeMultiplier,
       homeDaysSinceLastGame: homeFatigue.daysSinceLastGame,
       homeIsOvertimePenalty: homeFatigue.isOvertimePenalty,
+      homeRoadTripConsecutiveAway: homeFatigue.roadTripConsecutiveAway,
+      homeHasCoastToCoastRoadSwing: homeFatigue.hasCoastToCoastRoadSwing,
       // Away fatigue
       awayFatigueScore: awayFatigue.score,
       awayIsBackToBack: awayFatigue.isBackToBack,
@@ -137,6 +141,8 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       awayAltitudeMultiplier: awayFatigue.altitudeMultiplier,
       awayDaysSinceLastGame: awayFatigue.daysSinceLastGame,
       awayIsOvertimePenalty: awayFatigue.isOvertimePenalty,
+      awayRoadTripConsecutiveAway: awayFatigue.roadTripConsecutiveAway,
+      awayHasCoastToCoastRoadSwing: awayFatigue.hasCoastToCoastRoadSwing,
     })
     .from(games)
     .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
@@ -178,8 +184,8 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       {
         gamesInLast30Days: games30Map.get(row.homeTeamId) ?? 0,
         is4In6: is4In6Map.get(row.homeTeamId) ?? false,
-        roadTripConsecutiveAway: 0,
-        hasCoastToCoastRoadSwing: false,
+        roadTripConsecutiveAway: row.homeRoadTripConsecutiveAway ?? 0,
+        hasCoastToCoastRoadSwing: row.homeHasCoastToCoastRoadSwing ?? false,
       },
       {
         side: "home",
@@ -199,8 +205,8 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       {
         gamesInLast30Days: games30Map.get(row.awayTeamId) ?? 0,
         is4In6: is4In6Map.get(row.awayTeamId) ?? false,
-        roadTripConsecutiveAway: 0,
-        hasCoastToCoastRoadSwing: false,
+        roadTripConsecutiveAway: row.awayRoadTripConsecutiveAway ?? 0,
+        hasCoastToCoastRoadSwing: row.awayHasCoastToCoastRoadSwing ?? false,
       },
       {
         side: "away",
@@ -619,7 +625,9 @@ function buildFatigueInfo(
     gamesInLast30Days: extras.gamesInLast30Days,
     is4In6: extras.is4In6,
     isOvertimePenalty: isOvertimePenalty ?? false,
-    roadTripConsecutiveAway: extras.roadTripConsecutiveAway,
+    // Road-trip streak is only shown for the visiting team (type contract).
+    roadTripConsecutiveAway:
+      ctx.side === "home" ? 0 : extras.roadTripConsecutiveAway,
     hasCoastToCoastRoadSwing: extras.hasCoastToCoastRoadSwing,
   };
 }

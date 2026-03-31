@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { FatigueBar } from "@/components/fatigue-bar"
+import { TRAVEL_LOOKBACK_DAYS } from "@/lib/fatigue"
 import { NBA_TEAM_IDS } from "@/lib/nba-team-ids"
 import { cn } from "@/lib/utils"
 import type { FatigueInfo, GameResponse } from "@/types"
@@ -325,7 +326,12 @@ function FatigueDetailColumn({
       </div>
 
       <div className="flex justify-between gap-2 text-xs">
-        <span className="text-slate-500">Travel (miles)</span>
+        <span
+          className="text-slate-500"
+          title={`Cumulative great-circle miles over the prior ${TRAVEL_LOOKBACK_DAYS} days (scheduled legs)`}
+        >
+          Travel (mi, {TRAVEL_LOOKBACK_DAYS}d)
+        </span>
         <span
           className={cn(
             "font-heading font-semibold tabular-nums",

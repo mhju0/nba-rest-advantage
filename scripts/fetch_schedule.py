@@ -1,6 +1,6 @@
 """Fetch NBA game schedules and insert into games table.
 
-Covers nine seasons from 2015-16 through 2024-25, excluding 2019-20 (see below).
+Covers twenty seasons from 2005-06 through 2025-26, excluding 2019-20 (see below).
 Each game appears twice in LeagueGameFinder (one row per team). We pair rows by
 GAME_ID, using MATCHUP ("vs." = home, "@ " = away) to identify home/away teams.
 
@@ -44,6 +44,16 @@ SKIP_OT_SEED = os.environ.get("NBA_SEED_SKIP_OT", "").lower() in ("1", "true", "
 
 # 2019-20 omitted — Orlando bubble has no meaningful travel for fatigue analysis.
 SEASONS = [
+    "2005-06",
+    "2006-07",
+    "2007-08",
+    "2008-09",
+    "2009-10",
+    "2010-11",
+    "2011-12",
+    "2012-13",
+    "2013-14",
+    "2014-15",
     "2015-16",
     "2016-17",
     "2017-18",
@@ -53,6 +63,7 @@ SEASONS = [
     "2022-23",
     "2023-24",
     "2024-25",
+    "2025-26",
 ]
 SEASON_TYPES = ["Regular Season", "Playoffs"]
 

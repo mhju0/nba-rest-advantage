@@ -12,7 +12,7 @@
  *   pnpm exec tsx scripts/backfill_fatigue.ts 2022-10-01 2023-06-30  # optional date range
  *   pnpm exec tsx scripts/backfill_fatigue.ts --force                 # wipe fatigue_scores, recompute all
  *
- * Typical runtime: ~15–25 minutes for 9 seasons (~10 000+ games).
+ * Typical runtime: scales with game count (~30–90+ minutes for 20 seasons / ~25k+ games).
  */
 
 import { and, asc, between, eq, isNull, sql } from "drizzle-orm";

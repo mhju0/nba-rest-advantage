@@ -18,6 +18,7 @@ import { format } from "date-fns"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
+import { NBA_SEASONS } from "@/lib/nba-season"
 import type {
   AnalysisResponse,
   ApiResponse,
@@ -238,10 +239,8 @@ const RA_OPTIONS = [
   { label: "RA ≥ 7", value: 7 },
 ]
 
-const SEASONS = [
-  "2025-26", "2024-25", "2023-24", "2022-23", "2021-22", "2020-21",
-  "2018-19", "2017-18", "2016-17", "2015-16",
-]
+/** Season filter options (newest first) — mirrors home page / API allow-list. */
+const EXPLORE_SEASON_OPTIONS = [...NBA_SEASONS].reverse()
 
 const NBA_TEAMS = [
   "ATL", "BOS", "BKN", "CHA", "CHI", "CLE", "DAL", "DEN",
@@ -387,7 +386,7 @@ function ExploreGames({
           aria-label="Season filter"
         >
           <option value="">All Seasons</option>
-          {SEASONS.map((s) => (
+          {EXPLORE_SEASON_OPTIONS.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>

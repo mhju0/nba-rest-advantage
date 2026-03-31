@@ -178,6 +178,31 @@ describe("calculateFatigue", () => {
     expect(traveled.score).toBeGreaterThan(homeStay.score + 0.8);
   });
 
+  it("road trip streak is consecutive away games plus tonight when the team is away", () => {
+    const recent: RecentGame[] = [
+      baseRecent({
+        date: "2025-01-01",
+        isHome: false,
+        opponentLat: NYC_LAT,
+        opponentLon: NYC_LON,
+      }),
+      baseRecent({
+        date: "2025-01-03",
+        isHome: false,
+        opponentLat: BOS_LAT,
+        opponentLon: BOS_LON,
+      }),
+    ];
+    const thirdStraightRoad = fatigueAwayTeam(
+      "2025-01-05",
+      recent,
+      false,
+      DEN_LAT,
+      DEN_LON
+    );
+    expect(thirdStraightRoad.roadTripConsecutiveAway).toBe(3);
+  });
+
   it("visiting altitude (away at Denver) applies altitude multiplier (~+1–2 pts vs flat venue)", () => {
     const recent: RecentGame[] = [
       baseRecent({ date: "2025-04-05", isHome: true }),
@@ -244,6 +269,27 @@ describe("calculateFatigue", () => {
     ]);
     expect(twoOt.overtimeFatigueBonus).toBe(1);
     expect(twoOt.score - oneOt.score).toBeCloseTo(0.5, 5);
+  });
+
+  it("travel miles use a 7-day window (older inter-game legs are excluded)", () => {
+    const recent: RecentGame[] = [
+      baseRecent({
+        date: "2025-01-01",
+        isHome: false,
+        opponentLat: NYC_LAT,
+        opponentLon: NYC_LON,
+      }),
+      baseRecent({
+        date: "2025-01-02",
+        isHome: false,
+        opponentLat: BOS_LAT,
+        opponentLon: BOS_LON,
+      }),
+    ];
+    const r = fatigueHomeTeam("2025-02-01", recent);
+    // No prior game in the 7-day window before Feb 1 → only Boston → LA (home), not LA–NYC–BOS–LA.
+    expect(r.travelDistanceMiles).toBeGreaterThan(2200);
+    expect(r.travelDistanceMiles).toBeLessThan(3800);
   });
 
   it("away → away with 2+ calendar days off assumes travel via home (more miles than a 1-day road leg)", () => {

@@ -2,7 +2,7 @@
  * NBA Rest Advantage — Weighted Decay Fatigue Model
  *
  * 1. DECAY LOAD: Recent games (up to ~30 days) contribute fatigue with exponential decay.
- * 2. TRAVEL LOAD: Cumulative travel with log scaling.
+ * 2. TRAVEL LOAD: Cumulative travel (7-day rolling window of legs) with log scaling.
  * 3. ROAD SEGMENT LOAD: Consecutive games away from home + coast-to-coast swings.
  * 4. SCHEDULE STRESS: Multi-window density (6/7/12/15/30-day) vs NBA “tough slate” anchors.
  * 5. MULTIPLIERS: Back-to-back, altitude, schedule stress (combined into densityMultiplier in DB).
@@ -17,6 +17,9 @@ import { haversineDistance } from "./haversine";
 
 /** Must match `fetchRecentGamesForTeam` window. */
 export const FATIGUE_RECENT_LOOKBACK_DAYS = 30;
+
+/** Calendar-day window for summing travel legs (still uses full `recentGames` for decay, stress, etc.). */
+export const TRAVEL_LOOKBACK_DAYS = 7;
 
 /** Decay includes games played on these calendar days before the target game. */
 const DECAY_LOOKBACK_DAYS = 30;
@@ -223,6 +226,12 @@ function isSameArena(lat1: number, lon1: number, lat2: number, lon2: number): bo
   return haversineDistance(lat1, lon1, lat2, lon2) < SAME_ARENA_MILES;
 }
 
+/**
+ * One leg or chain of legs between consecutive games. Home↔home = 0. Away↔away with a
+ * single off day uses a direct arena→arena hop; with 2+ calendar days between away games,
+ * the model assumes the team returns home then travels to the next venue (NBA-typical
+ * for non–back-to-back road swings). Miles are great-circle (haversine), not routing.
+ */
 function travelMilesBetweenGames(
   previousGame: RecentGame | null,
   currentGameIsHome: boolean,
@@ -267,6 +276,110 @@ function travelMilesBetweenGames(
   }
 
   return haversineDistance(prevArenaLat, prevArenaLon, currentArenaLat, currentArenaLon);
+}
+
+/**
+ * Sums travel legs for prior games dated in `[tip − lookbackDays, tip)` (game day excluded), plus
+ * the inbound leg from the prior game immediately before that window (if any) into the first game
+ * inside the window, and the leg from the most recent prior game to tonight.
+ */
+function computeTotalTravelMiles(
+  gameDate: string,
+  tip: Date,
+  recentGames: RecentGame[],
+  currentGameIsHome: boolean,
+  currentVenueLat: number,
+  currentVenueLon: number,
+  teamHomeLat: number,
+  teamHomeLon: number,
+  lookbackDays: number
+): number {
+  if (recentGames.length === 0) {
+    return travelMilesBetweenGames(
+      null,
+      currentGameIsHome,
+      currentVenueLat,
+      currentVenueLon,
+      teamHomeLat,
+      teamHomeLon,
+      0
+    );
+  }
+
+  const windowStart = subDays(tip, lookbackDays);
+  const firstIdxInWindow = recentGames.findIndex((g) => {
+    const d = parseISO(g.date);
+    return d >= windowStart && d < tip;
+  });
+
+  let total = 0;
+
+  if (firstIdxInWindow === -1) {
+    const lastGame = recentGames[recentGames.length - 1];
+    const gapToCurrent = calendarDaysBetween(lastGame.date, gameDate);
+    return travelMilesBetweenGames(
+      lastGame,
+      currentGameIsHome,
+      currentVenueLat,
+      currentVenueLon,
+      teamHomeLat,
+      teamHomeLon,
+      gapToCurrent
+    );
+  }
+
+  const prevBeforeChain =
+    firstIdxInWindow > 0 ? recentGames[firstIdxInWindow - 1]! : null;
+  const chainStart = recentGames[firstIdxInWindow]!;
+  const chainStartLat = chainStart.isHome
+    ? chainStart.teamLat
+    : chainStart.opponentLat;
+  const chainStartLon = chainStart.isHome
+    ? chainStart.teamLon
+    : chainStart.opponentLon;
+
+  total += travelMilesBetweenGames(
+    prevBeforeChain,
+    chainStart.isHome,
+    chainStartLat,
+    chainStartLon,
+    teamHomeLat,
+    teamHomeLon,
+    prevBeforeChain === null
+      ? 0
+      : calendarDaysBetween(prevBeforeChain.date, chainStart.date)
+  );
+
+  for (let i = firstIdxInWindow; i < recentGames.length - 1; i++) {
+    const prev = recentGames[i]!;
+    const cur = recentGames[i + 1]!;
+    const gap = calendarDaysBetween(prev.date, cur.date);
+    const curArenaLat = cur.isHome ? cur.teamLat : cur.opponentLat;
+    const curArenaLon = cur.isHome ? cur.teamLon : cur.opponentLon;
+    total += travelMilesBetweenGames(
+      prev,
+      cur.isHome,
+      curArenaLat,
+      curArenaLon,
+      teamHomeLat,
+      teamHomeLon,
+      gap
+    );
+  }
+
+  const lastGame = recentGames[recentGames.length - 1]!;
+  const gapToCurrent = calendarDaysBetween(lastGame.date, gameDate);
+  total += travelMilesBetweenGames(
+    lastGame,
+    currentGameIsHome,
+    currentVenueLat,
+    currentVenueLon,
+    teamHomeLat,
+    teamHomeLon,
+    gapToCurrent
+  );
+
+  return total;
 }
 
 // ─── Core Algorithm ─────────────────────────────────────────────
@@ -359,49 +472,19 @@ export function calculateFatigue(
   }
   decayLoadScore = Math.round(decayLoadScore * 100) / 100;
 
-  let totalTravelMiles = 0;
-  const first = recentGames[0];
-  const firstArenaLat = first.isHome ? first.teamLat : first.opponentLat;
-  const firstArenaLon = first.isHome ? first.teamLon : first.opponentLon;
-  totalTravelMiles += travelMilesBetweenGames(
-    null,
-    first.isHome,
-    firstArenaLat,
-    firstArenaLon,
-    teamHomeLat,
-    teamHomeLon,
-    0
-  );
-
-  for (let i = 1; i < recentGames.length; i++) {
-    const prev = recentGames[i - 1];
-    const cur = recentGames[i];
-    const gap = calendarDaysBetween(prev.date, cur.date);
-    const curArenaLat = cur.isHome ? cur.teamLat : cur.opponentLat;
-    const curArenaLon = cur.isHome ? cur.teamLon : cur.opponentLon;
-    totalTravelMiles += travelMilesBetweenGames(
-      prev,
-      cur.isHome,
-      curArenaLat,
-      curArenaLon,
-      teamHomeLat,
-      teamHomeLon,
-      gap
-    );
-  }
-
-  const lastGame = recentGames[recentGames.length - 1];
-  const gapToCurrent = calendarDaysBetween(lastGame.date, gameDate);
-  totalTravelMiles += travelMilesBetweenGames(
-    lastGame,
+  const totalTravelMiles = computeTotalTravelMiles(
+    gameDate,
+    tip,
+    recentGames,
     currentGameIsHome,
     currentVenueLat,
     currentVenueLon,
     teamHomeLat,
     teamHomeLon,
-    gapToCurrent
+    TRAVEL_LOOKBACK_DAYS
   );
 
+  const lastGame = recentGames[recentGames.length - 1]!;
   const travelLoadScore =
     totalTravelMiles > 0
       ? Math.round(
