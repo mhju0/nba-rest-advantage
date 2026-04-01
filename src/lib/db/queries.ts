@@ -61,6 +61,7 @@ async function countTeamGamesInDaysBefore(
     .where(
       and(
         or(eq(games.homeTeamId, teamId), eq(games.awayTeamId, teamId)),
+        eq(games.status, "final"),
         gte(games.date, start),
         lt(games.date, gameDateYmd)
       )
@@ -84,7 +85,11 @@ async function computeIs4In6Map(
         and(
           or(eq(games.homeTeamId, tid), eq(games.awayTeamId, tid)),
           gte(games.date, start),
-          lte(games.date, gameDate)
+          lte(games.date, gameDate),
+          or(
+            eq(games.date, gameDate),
+            and(lt(games.date, gameDate), eq(games.status, "final"))
+          )
         )
       );
     out.set(tid, Number(n[0]?.c ?? 0) >= 4);

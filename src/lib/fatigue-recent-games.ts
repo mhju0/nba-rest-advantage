@@ -58,6 +58,7 @@ export async function fetchRecentGamesForTeam(
     .where(
       and(
         or(eq(games.homeTeamId, teamId), eq(games.awayTeamId, teamId)),
+        eq(games.status, "final"),
         gte(games.date, windowStart),
         lt(games.date, gameDateStr)
       )

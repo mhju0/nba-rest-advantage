@@ -2,30 +2,17 @@ import { endOfMonth, format, startOfMonth } from "date-fns";
 
 /**
  * Seasons the app and ingest pipeline support (2019-20 bubble omitted).
+ * 1985-86 … 2025-26 — matches `scripts/fetch_schedule.py` LeagueGameFinder coverage.
  * Oldest → newest for stable sort; UI often reverses for “latest first” dropdowns.
  */
-export const NBA_SEASONS = [
-  "2005-06",
-  "2006-07",
-  "2007-08",
-  "2008-09",
-  "2009-10",
-  "2010-11",
-  "2011-12",
-  "2012-13",
-  "2013-14",
-  "2014-15",
-  "2015-16",
-  "2016-17",
-  "2017-18",
-  "2018-19",
-  "2020-21",
-  "2021-22",
-  "2022-23",
-  "2023-24",
-  "2024-25",
-  "2025-26",
-] as const;
+export const NBA_SEASONS: readonly string[] = (() => {
+  const out: string[] = [];
+  for (let y = 1985; y <= 2025; y++) {
+    if (y === 2019) continue;
+    out.push(`${y}-${String(y + 1).slice(-2)}`);
+  }
+  return out;
+})();
 
 export type NbaSeasonLabel = (typeof NBA_SEASONS)[number];
 

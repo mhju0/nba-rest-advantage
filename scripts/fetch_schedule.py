@@ -1,10 +1,13 @@
 """Fetch NBA game schedules and insert into games table.
 
-Covers twenty seasons from 2005-06 through 2025-26, excluding 2019-20 (see below).
+Covers seasons from 1985-86 through 2025-26, excluding 2019-20 (see below).
 Each game appears twice in LeagueGameFinder (one row per team). We pair rows by
 GAME_ID, using MATCHUP ("vs." = home, "@ " = away) to identify home/away teams.
 
-Safe to run multiple times — uses INSERT ON CONFLICT DO NOTHING.
+Safe to run multiple times — uses INSERT ... ON CONFLICT (external_id) DO UPDATE
+for scores, status, overtime_periods, and game_type so current-season rows refresh
+when games go final.
+
 Reads DATABASE_URL from scripts/.env.
 
 Skipped season — 2019-20 (COVID bubble):
@@ -17,6 +20,13 @@ Other notes:
   2020-21: Normal home/away schedule (no bubble) — included.
 
   Playoffs: Not fetched — only Regular Season (stats.nba.com game IDs with 002 prefix).
+
+Post-fetch (recompute aggregates for analysis + tracker; repo root, DATABASE_URL set):
+
+  pnpm exec tsx scripts/backfill_fatigue.ts
+  pnpm exec tsx scripts/backfill_predictions.ts
+
+Large historical pulls: fatigue backfill can take 30–90+ minutes for ~40 seasons.
 """
 
 import os
@@ -45,28 +55,17 @@ if not DATABASE_URL:
 SKIP_OT_SEED = os.environ.get("NBA_SEED_SKIP_OT", "").lower() in ("1", "true", "yes")
 
 # 2019-20 omitted — Orlando bubble has no meaningful travel for fatigue analysis.
-SEASONS = [
-    "2005-06",
-    "2006-07",
-    "2007-08",
-    "2008-09",
-    "2009-10",
-    "2010-11",
-    "2011-12",
-    "2012-13",
-    "2013-14",
-    "2014-15",
-    "2015-16",
-    "2016-17",
-    "2017-18",
-    "2018-19",
-    "2020-21",
-    "2021-22",
-    "2022-23",
-    "2023-24",
-    "2024-25",
-    "2025-26",
-]
+def _nba_season_labels() -> list[str]:
+    """Start years 1985..2025 → '1985-86' .. '2025-26'; skip 2019-20 bubble."""
+    out: list[str] = []
+    for y in range(1985, 2026):
+        if y == 2019:
+            continue
+        out.append(f"{y}-{str(y + 1)[-2:]}")
+    return out
+
+
+SEASONS = _nba_season_labels()
 # Playoffs excluded — app and fatigue model target regular season only.
 SEASON_TYPES = ["Regular Season"]
 
@@ -99,11 +98,17 @@ def fetch_games_df(season: str, season_type: str) -> pd.DataFrame:
 # Map any legacy/alternate abbreviations → our canonical abbreviation.
 ABBR_ALIASES: dict[str, str] = {
     "CHO": "CHA",   # Charlotte Hornets (nba_api alternates between CHO and CHA)
+    "CHH": "CHA",   # Original Charlotte Hornets (1988–2002; maps to current CHA row)
     "NJN": "BKN",   # New Jersey Nets (moved to Brooklyn 2012-13; kept for safety)
     "NOH": "NOP",   # New Orleans Hornets/Pelicans pre-2013 (kept for safety)
     "NOK": "NOP",   # New Orleans/Oklahoma City Hornets (2005-07; unlikely but safe)
     "SEA": "OKC",   # Seattle SuperSonics (became OKC 2008-09; kept for safety)
     "VAN": "MEM",   # Vancouver Grizzlies (moved to Memphis 2001; kept for safety)
+    # Legacy stats.nba.com codes (pre–mid-2000s naming)
+    "GOS": "GSW",   # Golden State (historical typo / old code)
+    "PHL": "PHI",   # Philadelphia 76ers
+    "SAN": "SAS",   # San Antonio Spurs
+    "UTH": "UTA",   # Utah Jazz
 }
 
 
@@ -202,7 +207,12 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
         home_score = int(home["PTS"]) if pd.notna(home["PTS"]) else None
         away_score = int(away["PTS"]) if pd.notna(away["PTS"]) else None
 
-        ot_periods = 0 if SKIP_OT_SEED else fetch_overtime_periods(gid_str)
+        is_final = home_score is not None and away_score is not None
+        status = "final" if is_final else "scheduled"
+        if is_final and not SKIP_OT_SEED:
+            ot_periods = fetch_overtime_periods(gid_str)
+        else:
+            ot_periods = 0
         game_type = get_game_type(gid_str, home["GAME_DATE"])
 
         records.append((
@@ -213,7 +223,7 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
             team_map[away_abbr],
             home_score,
             away_score,
-            "final",
+            status,
             ot_periods,
             game_type,
         ))
@@ -234,7 +244,12 @@ INSERT INTO games (
     overtime_periods, game_type
 )
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT (external_id) DO NOTHING;
+ON CONFLICT (external_id) DO UPDATE SET
+    home_score = EXCLUDED.home_score,
+    away_score = EXCLUDED.away_score,
+    status = EXCLUDED.status,
+    overtime_periods = EXCLUDED.overtime_periods,
+    game_type = EXCLUDED.game_type;
 """
 
 
@@ -248,7 +263,7 @@ def main() -> None:
         else:
             print("Fetching overtime via BoxScoreSummary (slow; set NBA_SEED_SKIP_OT=1 to skip).\n")
 
-        total_inserted = 0
+        total_upserts = 0
 
         for season in SEASONS:
             print(f"── Season {season} ──────────────────────────────")
@@ -276,11 +291,10 @@ def main() -> None:
             with conn:
                 with conn.cursor() as cur:
                     cur.executemany(INSERT_SQL, unique_records)
-                    inserted = cur.rowcount
-                    total_inserted += inserted
-                    print(f"  Inserted {inserted} new games ({len(unique_records) - inserted} already existed).\n")
+                    total_upserts += len(unique_records)
+                    print(f"  Upserted {len(unique_records)} game row(s) (insert or update).\n")
 
-        print(f"Done. Total new rows inserted: {total_inserted}")
+        print(f"Done. Total game records applied: {total_upserts}")
 
     finally:
         conn.close()

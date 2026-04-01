@@ -5,7 +5,9 @@ import { getRegularSeasonGameDatesWithCounts } from "@/lib/db/queries";
 import { NBA_SEASONS } from "@/lib/nba-season";
 import type { ApiResponse, GameDateCount } from "@/types";
 
-const SeasonSchema = z.enum(NBA_SEASONS);
+const SeasonSchema = z.string().refine((s) => NBA_SEASONS.includes(s), {
+  message: "Invalid season",
+});
 
 const QuerySchema = z.object({
   season: SeasonSchema,
