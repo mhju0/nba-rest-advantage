@@ -134,7 +134,7 @@ function FinalScoreHero({
   )
 }
 
-function GameStatusRow({
+export function GameStatusRow({
   status,
   homeScore,
   awayScore,
@@ -208,7 +208,7 @@ function RoadTripBadge({ nights }: { nights: number }) {
   )
 }
 
-function RaBadge({
+export function RaBadge({
   restAdvantage,
   homeAbbr,
   awayAbbr,
@@ -263,7 +263,7 @@ function PenaltyMark({ active }: { active: boolean }) {
   )
 }
 
-function FatigueDetailColumn({
+export function FatigueDetailColumn({
   label,
   fatigue,
 }: {
@@ -369,7 +369,7 @@ function FatigueDetailColumn({
   )
 }
 
-function TeamRow({
+export function TeamRow({
   side,
   abbreviation,
   fatigue,

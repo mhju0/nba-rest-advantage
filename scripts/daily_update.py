@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-Daily NBA pipeline for GitHub Actions:
+Daily NBA pipeline for GitHub Actions (and local runs):
 
-1. Pull yesterday's box scores from nba_api (LeagueGameFinder) and mark games final.
-2. Run `pnpm exec tsx scripts/run-daily.ts <today ET>` to refresh fatigue for today's
+1. Pull a **rolling window** from nba_api (LeagueGameFinder): last 7 ET calendar days
+   through **60 days ahead**, upsert into `games` (scores, status, schedule). This fixes
+   stale/wrong scores (not only “yesterday”), inserts missing games, and loads upcoming
+   slates (e.g. April) without re-running the full season fetch.
+
+2. Refresh **overtime_periods** for **yesterday’s** final regular-season games only
+   (bounded BoxScoreSummary calls).
+
+3. Run `pnpm exec tsx scripts/run-daily.ts <today ET>` to refresh fatigue for today’s
    slate and regenerate open predictions.
 
-Requires DATABASE_URL in the environment (set via GitHub Actions secret).
+Requires DATABASE_URL in the environment (e.g. GitHub Actions secret).
 """
 
 from __future__ import annotations
@@ -14,22 +21,65 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import pandas as pd
 import psycopg2
 from dotenv import load_dotenv
-from nba_api.stats.endpoints import leaguegamefinder
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+from fetch_schedule import (
+    fetch_league_df_date_range,
+    load_team_id_map,
+    pair_games_from_date_range_df,
+    upsert_game_records,
+)
 from nba_ot_periods import fetch_overtime_periods
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Inclusive calendar span: scores for recent days + full upcoming regular-season window.
+LOOKBACK_DAYS = 7
+LOOKAHEAD_DAYS = 60
+
+
+def refresh_ot_lookback_finals(conn, today: date, records: list[tuple]) -> int:
+    """
+    Refresh overtime_periods for finals in [today - LOOKBACK_DAYS, today) so downstream
+    fatigue (prior-game OT flag) stays accurate — not only “yesterday.”
+
+    Tuple layout matches pair_games_from_date_range_df:
+    (external_id, game_date, season, ... home_score, away_score, status, ot, game_type)
+    """
+    oldest = today - timedelta(days=LOOKBACK_DAYS)
+    n = 0
+    seen: set[str] = set()
+    with conn.cursor() as cur:
+        for rec in records:
+            gid_str = rec[0]
+            gdate = rec[1]
+            status = rec[7]
+            if status != "final" or gdate < oldest or gdate >= today:
+                continue
+            if gid_str in seen:
+                continue
+            seen.add(gid_str)
+            ot_periods = fetch_overtime_periods(str(gid_str))
+            cur.execute(
+                """
+                UPDATE games
+                SET overtime_periods = %s
+                WHERE external_id = %s
+                """,
+                (ot_periods, str(gid_str)),
+            )
+            n += cur.rowcount
+    conn.commit()
+    return n
 
 
 def main() -> None:
@@ -43,33 +93,38 @@ def main() -> None:
 
     et = ZoneInfo("America/New_York")
     now_et = datetime.now(et)
-    yesterday = (now_et - timedelta(days=1)).date()
     today = now_et.date()
+    window_start = today - timedelta(days=LOOKBACK_DAYS)
+    window_end = today + timedelta(days=LOOKAHEAD_DAYS)
 
-    yesterday_str = yesterday.isoformat()
+    start_str = window_start.isoformat()
+    end_str = window_end.isoformat()
     today_str = today.isoformat()
 
     print(
         f"[daily_update] ET now={now_et.isoformat(timespec='seconds')} "
-        f"yesterday={yesterday_str} today={today_str}"
+        f"window={start_str}..{end_str} (today={today_str})"
     )
-
-    finder = leaguegamefinder.LeagueGameFinder(
-        date_from_nullable=yesterday_str,
-        date_to_nullable=yesterday_str,
-        league_id_nullable="00",
-        timeout=90,
-    )
-    df = finder.get_data_frames()[0]
 
     conn = psycopg2.connect(database_url)
-    updated = 0
     try:
+        team_map = load_team_id_map(conn)
+        df = fetch_league_df_date_range(start_str, end_str)
         if df.empty:
-            print("[daily_update] No NBA rows returned for yesterday (off day or API empty).")
+            print("[daily_update] LeagueGameFinder returned no rows for window.")
+            records: list[tuple] = []
         else:
-            updated = apply_score_updates(conn, df)
-        print(f"[daily_update] games rows touched by score update: {updated}")
+            # Skip per-game OT during bulk pairing (hundreds of games); refresh yesterday below.
+            records = pair_games_from_date_range_df(df, team_map, force_skip_ot=True)
+            n = upsert_game_records(conn, records)
+            conn.commit()
+            print(f"[daily_update] upserted {n} regular-season game row(s) in window.")
+
+        if records:
+            ot_updated = refresh_ot_lookback_finals(conn, today, records)
+            print(
+                f"[daily_update] overtime_periods refreshed for finals in {LOOKBACK_DAYS}d lookback: {ot_updated} row(s)"
+            )
     finally:
         conn.close()
 
@@ -84,65 +139,6 @@ def main() -> None:
         sys.exit(result.returncode)
 
     print("[daily_update] completed successfully.")
-
-
-def apply_score_updates(conn, df: pd.DataFrame) -> int:
-    """Pair home/away rows by GAME_ID and UPDATE games by external_id (regular season only)."""
-    from fetch_schedule import is_regular_season_game_id, normalize_stats_game_id
-
-    df = df.copy()
-    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"]).dt.date
-    df["PTS"] = pd.to_numeric(df["PTS"], errors="coerce")
-
-    home_rows = df[df["MATCHUP"].str.contains(r"\bvs\.", regex=True, na=False)]
-    away_rows = df[df["MATCHUP"].str.contains(r"\s@\s", regex=True, na=False)]
-    home_idx = home_rows.set_index("GAME_ID")
-    away_idx = away_rows.set_index("GAME_ID")
-
-    touched = 0
-    with conn.cursor() as cur:
-        for game_id, home in home_idx.iterrows():
-            if game_id not in away_idx.index:
-                continue
-            away = away_idx.loc[game_id]
-            if isinstance(away, pd.DataFrame):
-                away = away.iloc[0]
-
-            gid = normalize_stats_game_id(game_id)
-            if not is_regular_season_game_id(gid):
-                continue
-            if pd.isna(home["PTS"]) or pd.isna(away["PTS"]):
-                continue
-
-            h_pts = int(home["PTS"])
-            a_pts = int(away["PTS"])
-
-            cur.execute(
-                """
-                UPDATE games
-                SET home_score = %s,
-                    away_score = %s,
-                    status = 'final'
-                WHERE external_id = %s
-                """,
-                (h_pts, a_pts, str(gid)),
-            )
-            touched += cur.rowcount
-
-            if cur.rowcount > 0:
-                ot_periods = fetch_overtime_periods(str(gid))
-                cur.execute(
-                    """
-                    UPDATE games
-                    SET overtime_periods = %s
-                    WHERE external_id = %s
-                    """,
-                    (ot_periods, str(gid)),
-                )
-
-        conn.commit()
-
-    return touched
 
 
 if __name__ == "__main__":

@@ -46,6 +46,7 @@ export async function GET(
 
         return [
           {
+            gameId: row.id,
             date: row.date,
             season: row.season,
             homeTeamAbbreviation: row.homeTeamAbbr,

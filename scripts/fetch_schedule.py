@@ -130,6 +130,13 @@ def is_regular_season_game_id(game_id: object) -> bool:
     return len(gid) >= 3 and gid.startswith("002")
 
 
+def season_id_to_label(season_id: object) -> str:
+    """Map stats.nba.com SEASON_ID (e.g. 22025) to '2025-26'."""
+    raw = int(season_id)
+    y = int(str(raw)[-4:])
+    return f"{y}-{str(y + 1)[-2:]}"
+
+
 def get_game_type(game_id: str, game_date) -> str:
     """
     Determine season segment from the NBA API game ID and date.
@@ -147,35 +154,34 @@ def get_game_type(game_id: str, game_date) -> str:
     return "regular"
 
 
-def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[tuple]:
+def _pair_games_dataframe(
+    df: pd.DataFrame,
+    team_map: dict[str, int],
+    resolve_season,
+    *,
+    force_skip_ot: bool | None = None,
+) -> list[tuple]:
     """
-    Pair home/away rows by GAME_ID and return insert-ready tuples.
-
-    MATCHUP format:
-      "ABC vs. XYZ"  → ABC is the home team
-      "ABC @ XYZ"    → ABC is the away team
+    Pair home/away rows by GAME_ID. resolve_season(home_row) -> season label or None to skip.
     """
     if df.empty:
         return []
 
-    # Normalize types
     df = df.copy()
     df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"]).dt.date
     df["PTS"] = pd.to_numeric(df["PTS"], errors="coerce")
 
-    # Split into home-perspective and away-perspective rows
-    home_rows = df[df["MATCHUP"].str.contains(r"\bvs\.", regex=True)].copy()
-    away_rows = df[df["MATCHUP"].str.contains(r"\s@\s", regex=True)].copy()
+    home_rows = df[df["MATCHUP"].str.contains(r"\bvs\.", regex=True, na=False)].copy()
+    away_rows = df[df["MATCHUP"].str.contains(r"\s@\s", regex=True, na=False)].copy()
 
-    # Index by GAME_ID for fast lookup
     home_idx = home_rows.set_index("GAME_ID")
     away_idx = away_rows.set_index("GAME_ID")
 
     skipped = 0
     skipped_non_regular = 0
+    skipped_season = 0
     records: list[tuple] = []
 
-    # Use home_rows as the driver — every game has exactly one home row
     for game_id, home in home_idx.iterrows():
         if game_id not in away_idx.index:
             print(f"    WARNING: no away row for game {game_id}, skipping")
@@ -183,9 +189,13 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
             continue
 
         away = away_idx.loc[game_id]
-        # When a GAME_ID has multiple away rows (rare duplicates), take the first
         if isinstance(away, pd.DataFrame):
             away = away.iloc[0]
+
+        season = resolve_season(home)
+        if season is None:
+            skipped_season += 1
+            continue
 
         home_abbr = normalize_abbr(home["TEAM_ABBREVIATION"])
         away_abbr = normalize_abbr(away["TEAM_ABBREVIATION"])
@@ -209,7 +219,8 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
 
         is_final = home_score is not None and away_score is not None
         status = "final" if is_final else "scheduled"
-        if is_final and not SKIP_OT_SEED:
+        skip_ot = SKIP_OT_SEED if force_skip_ot is None else force_skip_ot
+        if is_final and not skip_ot:
             ot_periods = fetch_overtime_periods(gid_str)
         else:
             ot_periods = 0
@@ -230,10 +241,72 @@ def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[
 
     if skipped_non_regular:
         print(f"    Skipped {skipped_non_regular} non-regular games (game_id prefix is not 002).")
+    if skipped_season:
+        print(f"    Skipped {skipped_season} games (missing or invalid SEASON_ID).")
     if skipped:
         print(f"    Skipped {skipped} games due to missing data.")
 
     return records
+
+
+def pair_games(df: pd.DataFrame, season: str, team_map: dict[str, int]) -> list[tuple]:
+    """
+    Pair home/away rows by GAME_ID and return insert-ready tuples.
+
+    MATCHUP format:
+      "ABC vs. XYZ"  → ABC is the home team
+      "ABC @ XYZ"    → ABC is the away team
+    """
+    return _pair_games_dataframe(df, team_map, lambda _home: season)
+
+
+def resolve_season_from_row(home) -> str | None:
+    """Use SEASON_ID from LeagueGameFinder (date-range queries)."""
+    if "SEASON_ID" not in home.index or pd.isna(home["SEASON_ID"]):
+        return None
+    try:
+        return season_id_to_label(home["SEASON_ID"])
+    except (TypeError, ValueError):
+        return None
+
+
+def pair_games_from_date_range_df(
+    df: pd.DataFrame,
+    team_map: dict[str, int],
+    *,
+    force_skip_ot: bool | None = None,
+) -> list[tuple]:
+    """Same as pair_games but season comes from each row's SEASON_ID (required for multi-day API pulls)."""
+    return _pair_games_dataframe(
+        df, team_map, resolve_season_from_row, force_skip_ot=force_skip_ot
+    )
+
+
+def fetch_league_df_date_range(date_from: str, date_to: str) -> pd.DataFrame:
+    """LeagueGameFinder for an inclusive calendar span (YYYY-MM-DD)."""
+    print(f"  Fetching LeagueGameFinder {date_from} … {date_to} …", end=" ", flush=True)
+    finder = leaguegamefinder.LeagueGameFinder(
+        date_from_nullable=date_from,
+        date_to_nullable=date_to,
+        league_id_nullable="00",
+        timeout=90,
+    )
+    out = finder.get_data_frames()[0]
+    print(f"{len(out)} rows")
+    return out
+
+
+def upsert_game_records(conn, records: list[tuple]) -> int:
+    """INSERT … ON CONFLICT DO UPDATE. Deduplicates by external_id (last wins)."""
+    if not records:
+        return 0
+    seen: dict[str, tuple] = {}
+    for rec in records:
+        seen[rec[0]] = rec
+    unique = list(seen.values())
+    with conn.cursor() as cur:
+        cur.executemany(INSERT_SQL, unique)
+    return len(unique)
 
 
 INSERT_SQL = """

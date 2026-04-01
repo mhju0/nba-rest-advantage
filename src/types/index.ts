@@ -188,6 +188,7 @@ export interface AnalysisResponse {
 // ─── Game search ─────────────────────────────────────────────────
 
 export interface GameSearchResult {
+  gameId: number;
   date: string;
   season: string;
   homeTeamAbbreviation: string;
@@ -200,6 +201,23 @@ export interface GameSearchResult {
   restAdvantageDifferential: number;
   advantageTeam: "home" | "away";
   restedTeamWon: boolean;
+}
+
+/** One prior final game in the week before a focal game (for detail modals). */
+export interface TeamRecentResultGame {
+  date: string;
+  opponentAbbreviation: string;
+  isHome: boolean;
+  teamScore: number;
+  opponentScore: number;
+  won: boolean;
+}
+
+/** Full game card payload plus recent results for both teams. */
+export interface GameDetailResponse {
+  game: GameResponse;
+  homeRecentWeek: TeamRecentResultGame[];
+  awayRecentWeek: TeamRecentResultGame[];
 }
 
 export interface GameSearchResponse {

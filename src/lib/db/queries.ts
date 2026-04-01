@@ -8,7 +8,14 @@ import {
   monthCalendarBounds,
   regularSeasonDateBounds,
 } from "@/lib/nba-season";
-import type { FatigueInfo, GameDateCount, GameResponse, RestAdvantage } from "@/types";
+import type {
+  FatigueInfo,
+  GameDateCount,
+  GameDetailResponse,
+  GameResponse,
+  RestAdvantage,
+  TeamRecentResultGame,
+} from "@/types";
 
 const NEUTRAL_THRESHOLD = 0.5;
 
@@ -177,76 +184,274 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
     })(),
   ]);
 
-  return rows.map((row) => {
-    const homeFatigueData = buildFatigueInfo(
-      row.homeFatigueScore,
-      row.homeIsBackToBack,
-      row.homeGamesInLast7Days,
-      row.homeDaysSinceLastGame,
-      row.homeTravelDistanceMiles,
-      row.homeAltitudeMultiplier,
-      row.homeIsOvertimePenalty,
-      {
-        gamesInLast30Days: games30Map.get(row.homeTeamId) ?? 0,
-        is4In6: is4In6Map.get(row.homeTeamId) ?? false,
-        roadTripConsecutiveAway: row.homeRoadTripConsecutiveAway ?? 0,
-        hasCoastToCoastRoadSwing: row.homeHasCoastToCoastRoadSwing ?? false,
-      },
-      {
-        side: "home",
-        homeTeamCity: row.homeTeamCity,
-        homeAltitudeFlag: row.homeTeamAltitude,
-      }
-    );
+  return rows.map((row) =>
+    mapJoinedRowToGameResponse(row, is4In6Map, games30Map)
+  );
+}
 
-    const awayFatigueData = buildFatigueInfo(
-      row.awayFatigueScore,
-      row.awayIsBackToBack,
-      row.awayGamesInLast7Days,
-      row.awayDaysSinceLastGame,
-      row.awayTravelDistanceMiles,
-      row.awayAltitudeMultiplier,
-      row.awayIsOvertimePenalty,
-      {
-        gamesInLast30Days: games30Map.get(row.awayTeamId) ?? 0,
-        is4In6: is4In6Map.get(row.awayTeamId) ?? false,
-        roadTripConsecutiveAway: row.awayRoadTripConsecutiveAway ?? 0,
-        hasCoastToCoastRoadSwing: row.awayHasCoastToCoastRoadSwing ?? false,
-      },
-      {
-        side: "away",
-        homeTeamCity: row.homeTeamCity,
-        homeAltitudeFlag: row.homeTeamAltitude,
-      }
-    );
+/** Shared row shape from getGamesByDate / getGameById joins. */
+type GameFatigueJoinRow = {
+  id: number;
+  externalId: string;
+  date: string;
+  season: string;
+  status: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  homeTeamId: number;
+  awayTeamId: number;
+  homeTeamName: string;
+  homeTeamAbbreviation: string;
+  homeTeamCity: string;
+  homeTeamAltitude: boolean;
+  awayTeamName: string;
+  awayTeamAbbreviation: string;
+  awayTeamCity: string;
+  homeFatigueScore: string | null;
+  homeIsBackToBack: boolean | null;
+  homeGamesInLast7Days: number | null;
+  homeTravelDistanceMiles: string | null;
+  homeAltitudeMultiplier: string | null;
+  homeDaysSinceLastGame: number | null;
+  homeIsOvertimePenalty: boolean | null;
+  homeRoadTripConsecutiveAway: number | null;
+  homeHasCoastToCoastRoadSwing: boolean | null;
+  awayFatigueScore: string | null;
+  awayIsBackToBack: boolean | null;
+  awayGamesInLast7Days: number | null;
+  awayTravelDistanceMiles: string | null;
+  awayAltitudeMultiplier: string | null;
+  awayDaysSinceLastGame: number | null;
+  awayIsOvertimePenalty: boolean | null;
+  awayRoadTripConsecutiveAway: number | null;
+  awayHasCoastToCoastRoadSwing: boolean | null;
+};
 
-    const restAdvantage = buildRestAdvantage(homeFatigueData, awayFatigueData);
+function mapJoinedRowToGameResponse(
+  row: GameFatigueJoinRow,
+  is4In6Map: Map<number, boolean>,
+  games30Map: Map<number, number>
+): GameResponse {
+  const homeFatigueData = buildFatigueInfo(
+    row.homeFatigueScore,
+    row.homeIsBackToBack,
+    row.homeGamesInLast7Days,
+    row.homeDaysSinceLastGame,
+    row.homeTravelDistanceMiles,
+    row.homeAltitudeMultiplier,
+    row.homeIsOvertimePenalty,
+    {
+      gamesInLast30Days: games30Map.get(row.homeTeamId) ?? 0,
+      is4In6: is4In6Map.get(row.homeTeamId) ?? false,
+      roadTripConsecutiveAway: row.homeRoadTripConsecutiveAway ?? 0,
+      hasCoastToCoastRoadSwing: row.homeHasCoastToCoastRoadSwing ?? false,
+    },
+    {
+      side: "home",
+      homeTeamCity: row.homeTeamCity,
+      homeAltitudeFlag: row.homeTeamAltitude,
+    }
+  );
 
+  const awayFatigueData = buildFatigueInfo(
+    row.awayFatigueScore,
+    row.awayIsBackToBack,
+    row.awayGamesInLast7Days,
+    row.awayDaysSinceLastGame,
+    row.awayTravelDistanceMiles,
+    row.awayAltitudeMultiplier,
+    row.awayIsOvertimePenalty,
+    {
+      gamesInLast30Days: games30Map.get(row.awayTeamId) ?? 0,
+      is4In6: is4In6Map.get(row.awayTeamId) ?? false,
+      roadTripConsecutiveAway: row.awayRoadTripConsecutiveAway ?? 0,
+      hasCoastToCoastRoadSwing: row.awayHasCoastToCoastRoadSwing ?? false,
+    },
+    {
+      side: "away",
+      homeTeamCity: row.homeTeamCity,
+      homeAltitudeFlag: row.homeTeamAltitude,
+    }
+  );
+
+  const restAdvantage = buildRestAdvantage(homeFatigueData, awayFatigueData);
+
+  return {
+    id: row.id,
+    externalId: row.externalId,
+    date: String(row.date),
+    season: row.season,
+    status: row.status,
+    homeTeam: {
+      id: row.homeTeamId,
+      name: row.homeTeamName,
+      abbreviation: row.homeTeamAbbreviation,
+      city: row.homeTeamCity,
+    },
+    awayTeam: {
+      id: row.awayTeamId,
+      name: row.awayTeamName,
+      abbreviation: row.awayTeamAbbreviation,
+      city: row.awayTeamCity,
+    },
+    homeScore: row.homeScore,
+    awayScore: row.awayScore,
+    homeFatigue: homeFatigueData,
+    awayFatigue: awayFatigueData,
+    restAdvantage,
+  };
+}
+
+/**
+ * Single regular-season game by primary key (for detail modal / deep links).
+ */
+export async function getGameById(id: number): Promise<GameResponse | null> {
+  const homeTeam = alias(teams, "home_team");
+  const awayTeam = alias(teams, "away_team");
+  const homeFatigue = latestFatigueSubquery("home_fatigue_latest");
+  const awayFatigue = latestFatigueSubquery("away_fatigue_latest");
+
+  const rows = await db
+    .select({
+      id: games.id,
+      externalId: games.externalId,
+      date: games.date,
+      season: games.season,
+      status: games.status,
+      homeScore: games.homeScore,
+      awayScore: games.awayScore,
+      homeTeamId: games.homeTeamId,
+      awayTeamId: games.awayTeamId,
+      homeTeamName: homeTeam.name,
+      homeTeamAbbreviation: homeTeam.abbreviation,
+      homeTeamCity: homeTeam.city,
+      homeTeamAltitude: homeTeam.altitudeFlag,
+      awayTeamName: awayTeam.name,
+      awayTeamAbbreviation: awayTeam.abbreviation,
+      awayTeamCity: awayTeam.city,
+      homeFatigueScore: homeFatigue.score,
+      homeIsBackToBack: homeFatigue.isBackToBack,
+      homeGamesInLast7Days: homeFatigue.gamesInLast7Days,
+      homeTravelDistanceMiles: homeFatigue.travelDistanceMiles,
+      homeAltitudeMultiplier: homeFatigue.altitudeMultiplier,
+      homeDaysSinceLastGame: homeFatigue.daysSinceLastGame,
+      homeIsOvertimePenalty: homeFatigue.isOvertimePenalty,
+      homeRoadTripConsecutiveAway: homeFatigue.roadTripConsecutiveAway,
+      homeHasCoastToCoastRoadSwing: homeFatigue.hasCoastToCoastRoadSwing,
+      awayFatigueScore: awayFatigue.score,
+      awayIsBackToBack: awayFatigue.isBackToBack,
+      awayGamesInLast7Days: awayFatigue.gamesInLast7Days,
+      awayTravelDistanceMiles: awayFatigue.travelDistanceMiles,
+      awayAltitudeMultiplier: awayFatigue.altitudeMultiplier,
+      awayDaysSinceLastGame: awayFatigue.daysSinceLastGame,
+      awayIsOvertimePenalty: awayFatigue.isOvertimePenalty,
+      awayRoadTripConsecutiveAway: awayFatigue.roadTripConsecutiveAway,
+      awayHasCoastToCoastRoadSwing: awayFatigue.hasCoastToCoastRoadSwing,
+    })
+    .from(games)
+    .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
+    .innerJoin(awayTeam, eq(games.awayTeamId, awayTeam.id))
+    .leftJoin(
+      homeFatigue,
+      and(eq(homeFatigue.gameId, games.id), eq(homeFatigue.teamId, games.homeTeamId))
+    )
+    .leftJoin(
+      awayFatigue,
+      and(eq(awayFatigue.gameId, games.id), eq(awayFatigue.teamId, games.awayTeamId))
+    )
+    .where(and(eq(games.id, id), eq(games.gameType, "regular")))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return null;
+
+  const dateStr = String(row.date);
+  const teamIds = [row.homeTeamId, row.awayTeamId];
+  const [is4In6Map, games30Map] = await Promise.all([
+    computeIs4In6Map(dateStr, teamIds),
+    (async () => {
+      const m = new Map<number, number>();
+      await Promise.all(
+        teamIds.map(async (tid) => {
+          m.set(tid, await countTeamGamesInDaysBefore(tid, dateStr, 30));
+        })
+      );
+      return m;
+    })(),
+  ]);
+
+  return mapJoinedRowToGameResponse(row, is4In6Map, games30Map);
+}
+
+const RECENT_RESULTS_LOOKBACK_DAYS = 7;
+
+/**
+ * Final games for `teamId` in the 7 calendar days before `beforeDateYmd` (exclusive).
+ */
+export async function getTeamRecentFinalResults(
+  teamId: number,
+  beforeDateYmd: string
+): Promise<TeamRecentResultGame[]> {
+  const tip = parseISO(beforeDateYmd);
+  const windowStart = format(subDays(tip, RECENT_RESULTS_LOOKBACK_DAYS), "yyyy-MM-dd");
+  const homeT = alias(teams, "rh");
+  const awayT = alias(teams, "ra");
+
+  const rows = await db
+    .select({
+      date: games.date,
+      homeTeamId: games.homeTeamId,
+      awayTeamId: games.awayTeamId,
+      homeAbbr: homeT.abbreviation,
+      awayAbbr: awayT.abbreviation,
+      homeScore: games.homeScore,
+      awayScore: games.awayScore,
+    })
+    .from(games)
+    .innerJoin(homeT, eq(games.homeTeamId, homeT.id))
+    .innerJoin(awayT, eq(games.awayTeamId, awayT.id))
+    .where(
+      and(
+        eq(games.gameType, "regular"),
+        eq(games.status, "final"),
+        isNotNull(games.homeScore),
+        isNotNull(games.awayScore),
+        gte(games.date, windowStart),
+        lt(games.date, beforeDateYmd),
+        or(eq(games.homeTeamId, teamId), eq(games.awayTeamId, teamId))
+      )
+    )
+    .orderBy(desc(games.date));
+
+  return rows.map((r) => {
+    const isHome = r.homeTeamId === teamId;
+    const hs = r.homeScore as number;
+    const as = r.awayScore as number;
+    const teamScore = isHome ? hs : as;
+    const opponentScore = isHome ? as : hs;
+    const opponentAbbreviation = isHome ? r.awayAbbr : r.homeAbbr;
+    const won = teamScore > opponentScore;
     return {
-      id: row.id,
-      externalId: row.externalId,
-      date: row.date,
-      season: row.season,
-      status: row.status,
-      homeTeam: {
-        id: row.homeTeamId,
-        name: row.homeTeamName,
-        abbreviation: row.homeTeamAbbreviation,
-        city: row.homeTeamCity,
-      },
-      awayTeam: {
-        id: row.awayTeamId,
-        name: row.awayTeamName,
-        abbreviation: row.awayTeamAbbreviation,
-        city: row.awayTeamCity,
-      },
-      homeScore: row.homeScore,
-      awayScore: row.awayScore,
-      homeFatigue: homeFatigueData,
-      awayFatigue: awayFatigueData,
-      restAdvantage,
+      date: String(r.date),
+      opponentAbbreviation,
+      isHome,
+      teamScore,
+      opponentScore,
+      won,
     };
   });
+}
+
+export async function getGameDetailById(id: number): Promise<GameDetailResponse | null> {
+  const game = await getGameById(id);
+  if (!game) return null;
+
+  const [homeRecentWeek, awayRecentWeek] = await Promise.all([
+    getTeamRecentFinalResults(game.homeTeam.id, game.date),
+    getTeamRecentFinalResults(game.awayTeam.id, game.date),
+  ]);
+
+  return { game, homeRecentWeek, awayRecentWeek };
 }
 
 /**
@@ -503,6 +708,7 @@ type SearchFilters = {
 };
 
 type SearchRow = {
+  id: number;
   date: string;
   season: string;
   homeTeamAbbr: string;
@@ -554,6 +760,7 @@ export async function searchRegularSeasonGames(filters: SearchFilters): Promise<
 
   return db
     .select({
+      id: games.id,
       date: games.date,
       season: games.season,
       homeTeamAbbr: homeTeam.abbreviation,

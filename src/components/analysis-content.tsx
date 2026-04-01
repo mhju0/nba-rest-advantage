@@ -16,6 +16,7 @@ import {
 import type { TooltipContentProps } from "recharts"
 import { format } from "date-fns"
 import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ExploreGameDetailModal } from "@/components/explore-game-detail-modal"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { NBA_SEASONS } from "@/lib/nba-season"
@@ -269,6 +270,8 @@ function ExploreGames({
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [detailGameId, setDetailGameId] = useState<number | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
 
   // Sync when parent changes the RA filter via bar chart click
   useEffect(() => {
@@ -340,11 +343,24 @@ function ExploreGames({
   const selectClass =
     "rounded-lg border border-white/60 bg-white/70 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-[#17408B]/30"
 
+  const openDetail = useCallback((id: number) => {
+    setDetailGameId(id)
+    setDetailOpen(true)
+  }, [])
+
   return (
     <div ref={exploreRef} className="rounded-3xl border border-white/50 p-6" style={glass}>
+      <ExploreGameDetailModal
+        gameId={detailGameId}
+        open={detailOpen}
+        onOpenChange={(next) => {
+          setDetailOpen(next)
+          if (!next) setDetailGameId(null)
+        }}
+      />
       <p className="text-sm font-semibold text-slate-800">Explore Games</p>
       <p className="mt-0.5 text-xs text-slate-400">
-        Filter and browse individual matchups
+        Filter and browse individual matchups — click a row for fatigue details and recent games.
       </p>
 
       {/* ── Filters ─────────────────────────────────────────────── */}
@@ -475,15 +491,25 @@ function ExploreGames({
                 </td>
               </tr>
             ) : (
-              results.map((g, i) => {
+              results.map((g) => {
                 const advAbbr =
                   g.advantageTeam === "home"
                     ? g.homeTeamAbbreviation
                     : g.awayTeamAbbreviation
                 return (
                   <tr
-                    key={i}
-                    className="border-t border-slate-100/60 transition-colors hover:bg-white/40"
+                    key={g.gameId}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openDetail(g.gameId)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault()
+                        openDetail(g.gameId)
+                      }
+                    }}
+                    className="border-t border-slate-100/60 cursor-pointer transition-colors hover:bg-white/60 focus-visible:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17408B]/30"
+                    aria-label={`Open details: ${g.awayTeamAbbreviation} at ${g.homeTeamAbbreviation}, ${g.date}`}
                   >
                     <td className="px-3 py-3 text-slate-500">
                       {format(new Date(g.date + "T00:00:00"), "MMM d, yyyy")}
