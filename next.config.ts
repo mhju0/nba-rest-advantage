@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
         hostname: "cdn.nba.com",
         pathname: "/logos/nba/**",
       },
+      {
+        protocol: "https",
+        hostname: "a.espncdn.com",
+        pathname: "/i/teamlogos/nba/**",
+      },
     ],
   },
   async headers() {

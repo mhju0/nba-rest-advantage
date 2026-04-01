@@ -39,6 +39,8 @@ from fetch_schedule import (
     upsert_game_records,
 )
 from nba_ot_periods import fetch_overtime_periods
+from fetch_nba_schedule_cdn import build_cdn_records, fetch_cdn_schedule, upsert_game_records
+from fetch_schedule import load_team_id_map
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -106,10 +108,25 @@ def main() -> None:
         f"window={start_str}..{end_str} (today={today_str})"
     )
 
+    # Seed future games from CDN before fetching box scores
+    print("[daily_update] fetching CDN schedule to seed future games …")
+    cdn_data = fetch_cdn_schedule()
+
+    finder = leaguegamefinder.LeagueGameFinder(
+        date_from_nullable=yesterday_str,
+        date_to_nullable=yesterday_str,
+        league_id_nullable="00",
+        timeout=90,
+    )
+    df = finder.get_data_frames()[0]
+
     conn = psycopg2.connect(database_url)
     try:
         team_map = load_team_id_map(conn)
-        df = fetch_league_df_date_range(start_str, end_str)
+        cdn_records, cdn_season = build_cdn_records(cdn_data, team_map)
+        cdn_count = upsert_game_records(conn, cdn_records)
+        print(f"[daily_update] CDN upserted {cdn_count} games for season {cdn_season}.")
+
         if df.empty:
             print("[daily_update] LeagueGameFinder returned no rows for window.")
             records: list[tuple] = []

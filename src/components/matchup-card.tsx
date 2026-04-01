@@ -12,6 +12,7 @@ import {
 import { FatigueBar } from "@/components/fatigue-bar"
 import { TRAVEL_LOOKBACK_DAYS } from "@/lib/fatigue"
 import { NBA_TEAM_IDS } from "@/lib/nba-team-ids"
+import { getTeamBranding } from "@/lib/team-history"
 import { cn } from "@/lib/utils"
 import type { FatigueInfo, GameResponse } from "@/types"
 
@@ -28,11 +29,28 @@ const detailGlass = {
 
 // ─── Team logo ───────────────────────────────────────────────────
 
-function TeamLogo({ abbreviation }: { abbreviation: string }) {
+function TeamLogo({
+  abbreviation,
+  season,
+  fallback,
+}: {
+  abbreviation: string
+  season?: string
+  fallback?: { name: string; city: string }
+}) {
   const [error, setError] = useState(false)
-  const nbaId = NBA_TEAM_IDS[abbreviation]
 
-  if (!nbaId || error) {
+  const logoUrl =
+    season !== undefined
+      ? getTeamBranding(abbreviation, season, fallback).logoUrl
+      : (() => {
+          const nbaId = NBA_TEAM_IDS[abbreviation]
+          return nbaId
+            ? `https://cdn.nba.com/logos/nba/${nbaId}/global/L/logo.svg`
+            : null
+        })()
+
+  if (!logoUrl || error) {
     return (
       <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-slate-100 font-heading text-[10px] font-bold text-slate-500">
         {abbreviation}
@@ -42,12 +60,12 @@ function TeamLogo({ abbreviation }: { abbreviation: string }) {
 
   return (
     <Image
-      src={`https://cdn.nba.com/logos/nba/${nbaId}/global/L/logo.svg`}
+      src={logoUrl}
       alt={`${abbreviation} logo`}
       width={40}
       height={40}
       unoptimized
-      className="size-10 shrink-0"
+      className="size-10 shrink-0 object-contain"
       onError={() => setError(true)}
     />
   )
@@ -372,12 +390,18 @@ export function FatigueDetailColumn({
 export function TeamRow({
   side,
   abbreviation,
+  displayAbbreviation,
+  season,
+  teamFallback,
   fatigue,
   score,
   highlight,
 }: {
   side: "AWAY" | "HOME"
   abbreviation: string
+  displayAbbreviation: string
+  season: string
+  teamFallback: { name: string; city: string }
   fatigue: FatigueInfo | null
   score: number | null
   highlight: "advantage" | "disadvantage" | "neutral"
@@ -393,12 +417,18 @@ export function TeamRow({
       )}
     >
       <div className="flex items-center gap-2">
-        <TeamLogo abbreviation={abbreviation} />
+        <TeamLogo
+          abbreviation={abbreviation}
+          season={season}
+          fallback={teamFallback}
+        />
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400">
             {side}
           </span>
-          <span className="font-heading text-sm font-bold text-slate-800">{abbreviation}</span>
+          <span className="font-heading text-sm font-bold text-slate-800">
+            {displayAbbreviation}
+          </span>
           {fatigue?.isBackToBack && <B2BBadge />}
           {fatigue?.is3In4 && <ScheduleStressBadge label="3in4" />}
           {fatigue?.is4In6 && <ScheduleStressBadge label="4in6" />}
@@ -433,6 +463,15 @@ interface MatchupCardProps {
 
 export function MatchupCard({ game, index = 0, isScoreFlashing = false }: MatchupCardProps) {
   const [expanded, setExpanded] = useState(false)
+
+  const homeBrand = getTeamBranding(game.homeTeam.abbreviation, game.season, {
+    name: game.homeTeam.name,
+    city: game.homeTeam.city,
+  })
+  const awayBrand = getTeamBranding(game.awayTeam.abbreviation, game.season, {
+    name: game.awayTeam.name,
+    city: game.awayTeam.city,
+  })
 
   const absDiff = Math.abs(game.restAdvantage?.differential ?? 0)
   const showHighlight = !!game.restAdvantage && absDiff >= HIGHLIGHT_THRESHOLD
@@ -501,9 +540,9 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
             <div className="mt-2 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <CardTitle className="text-lg font-bold leading-tight text-slate-900">
-                  <span className="font-heading font-bold">{game.awayTeam.abbreviation}</span>
+                  <span className="font-heading font-bold">{awayBrand.abbreviation}</span>
                   <span className="mx-1.5 font-normal text-slate-300">@</span>
-                  <span className="font-heading font-bold">{game.homeTeam.abbreviation}</span>
+                  <span className="font-heading font-bold">{homeBrand.abbreviation}</span>
                 </CardTitle>
               </div>
               <ChevronDown
@@ -521,6 +560,12 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
           <TeamRow
             side="AWAY"
             abbreviation={game.awayTeam.abbreviation}
+            displayAbbreviation={awayBrand.abbreviation}
+            season={game.season}
+            teamFallback={{
+              name: game.awayTeam.name,
+              city: game.awayTeam.city,
+            }}
             fatigue={game.awayFatigue}
             score={game.awayFatigue?.score ?? null}
             highlight={awayHighlight}
@@ -529,14 +574,20 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
           <div className="flex items-center justify-center py-0.5">
             <RaBadge
               restAdvantage={game.restAdvantage}
-              homeAbbr={game.homeTeam.abbreviation}
-              awayAbbr={game.awayTeam.abbreviation}
+              homeAbbr={homeBrand.abbreviation}
+              awayAbbr={awayBrand.abbreviation}
             />
           </div>
 
           <TeamRow
             side="HOME"
             abbreviation={game.homeTeam.abbreviation}
+            displayAbbreviation={homeBrand.abbreviation}
+            season={game.season}
+            teamFallback={{
+              name: game.homeTeam.name,
+              city: game.homeTeam.city,
+            }}
             fatigue={game.homeFatigue}
             score={game.homeFatigue?.score ?? null}
             highlight={homeHighlight}
@@ -559,8 +610,8 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
               Fatigue breakdown
             </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <FatigueDetailColumn label={`Away · ${game.awayTeam.abbreviation}`} fatigue={game.awayFatigue} />
-              <FatigueDetailColumn label={`Home · ${game.homeTeam.abbreviation}`} fatigue={game.homeFatigue} />
+              <FatigueDetailColumn label={`Away · ${awayBrand.abbreviation}`} fatigue={game.awayFatigue} />
+              <FatigueDetailColumn label={`Home · ${homeBrand.abbreviation}`} fatigue={game.homeFatigue} />
             </div>
           </div>
         </div>

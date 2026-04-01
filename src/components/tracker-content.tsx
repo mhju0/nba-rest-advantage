@@ -1,22 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-} from "recharts"
-import type { TooltipContentProps } from "recharts"
-import { format, parseISO } from "date-fns"
-import Link from "next/link"
+import { useEffect, useMemo, useState } from "react"
+import Image from "next/image"
+import { addDays, format, parseISO, startOfDay } from "date-fns"
 import { Skeleton } from "@/components/ui/skeleton"
+import { getTeamBranding } from "@/lib/team-history"
 import { cn } from "@/lib/utils"
-import type { ApiResponse, AccuracyResponse, AccuracyTier, SeasonAccuracyPoint } from "@/types"
+import type { ApiResponse, PicksResponse, UpcomingPickExtended } from "@/types"
 
 // ─── Shared styles ────────────────────────────────────────────────
 
@@ -27,444 +17,563 @@ const glass = {
   boxShadow: "0 8px 32px rgba(23, 64, 139, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04)",
 } as const
 
-// ─── Tier config ──────────────────────────────────────────────────
-
-const TIER_CONFIG: Record<
-  AccuracyTier["label"],
-  { title: string; range: string; color: string; bgClass: string; textClass: string }
-> = {
-  low: {
-    title: "Low Confidence",
-    range: "RA 0–2",
-    color: "#64748b",
-    bgClass: "bg-slate-500",
-    textClass: "text-slate-500",
-  },
-  medium: {
-    title: "Medium Confidence",
-    range: "RA 2–5",
-    color: "#17408B",
-    bgClass: "bg-[#17408B]",
-    textClass: "text-[#17408B]",
-  },
-  high: {
-    title: "High Confidence",
-    range: "RA 5+",
-    color: "#C9082A",
-    bgClass: "bg-[#C9082A]",
-    textClass: "text-[#C9082A]",
-  },
-}
+const glassPill =
+  "rounded-full border border-white/50 bg-white/55 px-3 py-1.5 text-sm font-medium text-slate-700 shadow-[0_4px_24px_rgba(23,64,139,0.06)] backdrop-blur-xl transition-colors hover:bg-white/70"
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function pct(n: number): string {
-  return n === 0 ? "—" : `${n}%`
+function formatAmericanOdds(n: number): string {
+  return n > 0 ? `+${n}` : `${n}`
 }
 
-// ─── Custom tooltip ───────────────────────────────────────────────
+function pickCardTierClasses(tier: UpcomingPickExtended["tier"]): {
+  border: string
+  badgeWrap: string
+  badgeText: string
+  barFill: string
+} {
+  if (tier === "high") {
+    return {
+      border: "border-l-4 border-l-[#C9082A]",
+      badgeWrap: "bg-[#C9082A]/10",
+      badgeText: "text-[#C9082A]",
+      barFill: "bg-[#C9082A]",
+    }
+  }
+  if (tier === "medium") {
+    return {
+      border: "border-l-4 border-l-[#17408B]",
+      badgeWrap: "bg-[#17408B]/10",
+      badgeText: "text-[#17408B]",
+      barFill: "bg-[#17408B]",
+    }
+  }
+  return {
+    border: "",
+    badgeWrap: "bg-slate-100",
+    badgeText: "text-slate-500",
+    barFill: "bg-slate-400",
+  }
+}
 
-function SeasonAccuracyTooltip({ active, payload }: TooltipContentProps) {
-  if (!active || !payload?.length) return null
-  const d = payload[0].payload as SeasonAccuracyPoint
+function tierBarWidth(tier: UpcomingPickExtended["tier"], absDiff: number): string {
+  if (tier === "high") return "min(100%, 92%)"
+  if (tier === "medium") return "min(100%, 68%)"
+  if (tier === "low") return `${Math.min(100, 35 + absDiff * 8)}%`
+  return "28%"
+}
+
+// ─── Pick logo ───────────────────────────────────────────────────
+
+function PickTeamLogo({
+  abbreviation,
+  season,
+  fallback,
+}: {
+  abbreviation: string
+  season: string
+  fallback: { name: string; city: string }
+}) {
+  const [error, setError] = useState(false)
+  const { logoUrl } = getTeamBranding(abbreviation, season, fallback)
+
+  if (error) {
+    return (
+      <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-slate-100 font-heading text-[10px] font-bold text-slate-500">
+        {abbreviation}
+      </div>
+    )
+  }
+
+  return (
+    <Image
+      src={logoUrl}
+      alt=""
+      width={44}
+      height={44}
+      unoptimized
+      className="size-11 shrink-0 object-contain"
+      onError={() => setError(true)}
+    />
+  )
+}
+
+// ─── Skeleton ───────────────────────────────────────────────────
+
+function PicksCardSkeleton() {
   return (
     <div
-      className="rounded-xl border border-white/60 px-3 py-2 text-xs shadow-lg"
-      style={{ background: "rgba(255,255,255,0.95)", backdropFilter: "blur(8px)" }}
+      className="flex flex-col gap-4 overflow-hidden rounded-2xl border border-white/50 p-4"
+      style={glass}
     >
-      <p className="font-semibold text-slate-800">{d.season}</p>
-      <p className="mt-0.5 text-[#17408B]">
-        Accuracy: <span className="font-bold">{d.accuracyPct}%</span>
-      </p>
-      <p className="text-slate-500">
-        {d.correct.toLocaleString()} / {d.games.toLocaleString()} correct
-      </p>
-    </div>
-  )
-}
-
-// ─── Skeleton ─────────────────────────────────────────────────────
-
-function TrackerSkeleton() {
-  return (
-    <div className="flex flex-col gap-6">
-      {/* Hero */}
-      <div className="rounded-3xl border border-white/50 px-6 py-10" style={glass}>
-        <div className="flex flex-col items-center gap-3">
-          <Skeleton className="h-16 w-28 rounded-xl bg-slate-200/80" />
-          <Skeleton className="h-4 w-44 rounded-lg bg-slate-200/80" />
-          <Skeleton className="h-3 w-60 rounded-lg bg-slate-200/80" />
-        </div>
-      </div>
-      {/* Tiers */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="rounded-3xl border border-white/50 p-6" style={glass}>
-            <Skeleton className="mb-3 h-3 w-32 rounded-lg bg-slate-200/80" />
-            <Skeleton className="h-10 w-20 rounded-xl bg-slate-200/80" />
-            <Skeleton className="mt-2 h-3 w-28 rounded-lg bg-slate-200/80" />
+      <Skeleton className="h-4 w-28 rounded-lg bg-slate-200/80" />
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Skeleton className="size-11 shrink-0 rounded-full bg-slate-200/80" />
+            <Skeleton className="h-4 w-32 rounded-lg bg-slate-200/80" />
           </div>
-        ))}
-      </div>
-      {/* Chart */}
-      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-        <Skeleton className="mb-1 h-4 w-56 rounded-lg bg-slate-200/80" />
-        <Skeleton className="mb-6 h-3 w-44 rounded-lg bg-slate-200/80" />
-        <Skeleton className="h-56 w-full rounded-xl bg-slate-200/80" />
-      </div>
-      {/* Table */}
-      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-        <Skeleton className="mb-4 h-4 w-44 rounded-lg bg-slate-200/80" />
-        <div className="flex flex-col gap-2">
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-9 w-full rounded-lg bg-slate-200/80" />
-          ))}
+          <Skeleton className="h-3 w-10 rounded bg-slate-200/80" />
+        </div>
+        <Skeleton className="mx-auto h-3 w-16 rounded bg-slate-200/80" />
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Skeleton className="size-11 shrink-0 rounded-full bg-slate-200/80" />
+            <Skeleton className="h-4 w-32 rounded-lg bg-slate-200/80" />
+          </div>
+          <Skeleton className="h-3 w-10 rounded bg-slate-200/80" />
         </div>
       </div>
+      <Skeleton className="h-16 w-full rounded-xl bg-slate-200/80" />
+      <Skeleton className="h-3 w-full rounded bg-slate-200/80" />
     </div>
   )
 }
 
-// ─── Main component ───────────────────────────────────────────────
+function PicksSkeletonGrid() {
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {[0, 1, 2].map((i) => (
+        <PicksCardSkeleton key={i} />
+      ))}
+    </div>
+  )
+}
+
+// ─── Pick card ──────────────────────────────────────────────────
+
+function PickCard({ pick }: { pick: UpcomingPickExtended }) {
+  const homeBrand = getTeamBranding(pick.homeTeam.abbreviation, pick.season, {
+    name: pick.homeTeam.name,
+    city: pick.homeTeam.city,
+  })
+  const awayBrand = getTeamBranding(pick.awayTeam.abbreviation, pick.season, {
+    name: pick.awayTeam.name,
+    city: pick.awayTeam.city,
+  })
+
+  const absDiff = pick.differential !== null ? Math.abs(pick.differential) : 0
+  const tierStyles = pickCardTierClasses(pick.tier)
+  const barW = tierBarWidth(pick.tier, absDiff)
+
+  const hasPrediction =
+    pick.predictedAdvantageTeam !== null && pick.differential !== null
+
+  const predBranding =
+    hasPrediction && pick.predictedAdvantageTeam
+      ? pick.predictedAdvantageTeam.abbreviation.toUpperCase() ===
+          pick.homeTeam.abbreviation.toUpperCase()
+        ? homeBrand
+        : pick.predictedAdvantageTeam.abbreviation.toUpperCase() ===
+            pick.awayTeam.abbreviation.toUpperCase()
+          ? awayBrand
+          : getTeamBranding(
+              pick.predictedAdvantageTeam.abbreviation,
+              pick.season,
+              {
+                name: pick.predictedAdvantageTeam.name,
+                city: "",
+              }
+            )
+      : null
+
+  const predAbbr = predBranding?.abbreviation ?? ""
+  const diffStr =
+    pick.differential === null
+      ? ""
+      : `${pick.differential >= 0 ? "+" : ""}${pick.differential.toFixed(1)}`
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-4 overflow-hidden rounded-2xl border border-white/50 p-4 transition-colors",
+        tierStyles.border
+      )}
+      style={glass}
+    >
+      <p className="font-heading text-xs font-semibold uppercase tracking-wider text-slate-400">
+        {format(parseISO(pick.date), "MMM d, yyyy")}
+      </p>
+
+      {/* Away row */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <PickTeamLogo
+            abbreviation={pick.awayTeam.abbreviation}
+            season={pick.season}
+            fallback={{ name: pick.awayTeam.name, city: pick.awayTeam.city }}
+          />
+          <div className="min-w-0">
+            <p className="font-heading text-sm font-bold text-slate-900">
+              {awayBrand.abbreviation}{" "}
+              <span className="font-medium text-slate-600">{awayBrand.name}</span>
+            </p>
+          </div>
+        </div>
+        {pick.moneyline ? (
+          <span className="shrink-0 font-heading text-xs tabular-nums text-slate-400">
+            {formatAmericanOdds(pick.moneyline.away)}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="flex justify-center">
+        <span className="text-[10px] font-medium uppercase tracking-widest text-slate-300">
+          vs
+        </span>
+      </div>
+
+      {/* Home row */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <PickTeamLogo
+            abbreviation={pick.homeTeam.abbreviation}
+            season={pick.season}
+            fallback={{ name: pick.homeTeam.name, city: pick.homeTeam.city }}
+          />
+          <div className="min-w-0">
+            <p className="font-heading text-sm font-bold text-slate-900">
+              {homeBrand.abbreviation}{" "}
+              <span className="font-medium text-slate-600">{homeBrand.name}</span>
+            </p>
+          </div>
+        </div>
+        {pick.moneyline ? (
+          <span className="shrink-0 font-heading text-xs tabular-nums text-slate-400">
+            {formatAmericanOdds(pick.moneyline.home)}
+          </span>
+        ) : null}
+      </div>
+
+      {/* RA block */}
+      <div
+        className={cn(
+          "rounded-xl border px-3 py-3",
+          hasPrediction ? "border-white/50 bg-white/40" : "border-slate-200/80 bg-slate-50/50"
+        )}
+      >
+        {hasPrediction ? (
+          <>
+            <p className="text-center font-heading text-[11px] font-bold uppercase tracking-wide text-slate-600">
+              Rest advantage: {predAbbr}{" "}
+              <span className="text-slate-900">{diffStr}</span>
+            </p>
+            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200/80">
+              <div
+                className={cn("h-full rounded-full transition-all", tierStyles.barFill)}
+                style={{ width: barW }}
+              />
+            </div>
+            <p
+              className={cn(
+                "mt-2 text-center font-heading text-[10px] font-bold uppercase tracking-wider",
+                tierStyles.badgeText
+              )}
+            >
+              <span className={cn("rounded-full px-2 py-0.5", tierStyles.badgeWrap)}>
+                {pick.tier === "high"
+                  ? "High"
+                  : pick.tier === "medium"
+                    ? "Medium"
+                    : pick.tier === "low"
+                      ? "Low"
+                      : "Signal"}
+              </span>
+            </p>
+          </>
+        ) : (
+          <p className="text-center text-xs font-medium text-slate-400">
+            Awaiting analysis
+          </p>
+        )}
+      </div>
+
+      <p className="text-center text-[11px] text-slate-500">
+        Fatigue:{" "}
+        <span className="font-heading font-semibold tabular-nums text-slate-700">
+          {awayBrand.abbreviation}{" "}
+          {pick.awayFatigueScore !== null ? pick.awayFatigueScore.toFixed(1) : "—"}
+        </span>
+        <span className="mx-1.5 text-slate-300">·</span>
+        <span className="font-heading font-semibold tabular-nums text-slate-700">
+          {homeBrand.abbreviation}{" "}
+          {pick.homeFatigueScore !== null ? pick.homeFatigueScore.toFixed(1) : "—"}
+        </span>
+      </p>
+    </div>
+  )
+}
+
+// ─── Main ───────────────────────────────────────────────────────
 
 export function TrackerContent() {
-  const [data, setData] = useState<AccuracyResponse | null>(null)
+  const [payload, setPayload] = useState<PicksResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [tierFilter, setTierFilter] = useState<
+    "all" | "high" | "medium" | "low"
+  >("all")
+  const [rangeFilter, setRangeFilter] = useState<"today" | "7d" | "14d" | "all">(
+    "all"
+  )
+  const [sortBy, setSortBy] = useState<"date" | "ra">("date")
+
   useEffect(() => {
-    fetch("/api/analysis/accuracy")
-      .then((res) => res.json() as Promise<ApiResponse<AccuracyResponse>>)
-      .then(({ data: d, error: e }) => {
-        if (e) throw new Error(e)
-        setData(d)
+    fetch("/api/picks")
+      .then(async (res) => {
+        const body = (await res.json()) as ApiResponse<PicksResponse>
+        if (!res.ok || body.error) {
+          throw new Error(body.error ?? `Request failed (${res.status})`)
+        }
+        return body.data
       })
+      .then(setPayload)
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Failed to load accuracy data")
+        setError(err instanceof Error ? err.message : "Failed to load picks")
       })
       .finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <TrackerSkeleton />
+  const todayStart = startOfDay(new Date())
+  const todayYmd = format(todayStart, "yyyy-MM-dd")
+  const end7 = format(addDays(todayStart, 7), "yyyy-MM-dd")
+  const end14 = format(addDays(todayStart, 14), "yyyy-MM-dd")
 
-  if (error || !data) {
+  const filteredSorted = useMemo(() => {
+    if (!payload?.picks.length) return []
+    let list = [...payload.picks]
+
+    if (tierFilter !== "all") {
+      list = list.filter((p) => p.tier === tierFilter)
+    }
+
+    if (rangeFilter === "today") {
+      list = list.filter((p) => p.date === todayYmd)
+    } else if (rangeFilter === "7d") {
+      list = list.filter((p) => p.date >= todayYmd && p.date <= end7)
+    } else if (rangeFilter === "14d") {
+      list = list.filter((p) => p.date >= todayYmd && p.date <= end14)
+    }
+
+    if (sortBy === "date") {
+      list.sort((a, b) => {
+        const dc = a.date.localeCompare(b.date)
+        if (dc !== 0) return dc
+        const ad = Math.abs(a.differential ?? 0)
+        const bd = Math.abs(b.differential ?? 0)
+        return bd - ad
+      })
+    } else {
+      list.sort((a, b) => {
+        const ad = Math.abs(a.differential ?? 0)
+        const bd = Math.abs(b.differential ?? 0)
+        if (bd !== ad) return bd - ad
+        return a.date.localeCompare(b.date)
+      })
+    }
+
+    return list
+  }, [payload, tierFilter, rangeFilter, sortBy, todayYmd, end7, end14])
+
+  const totalPicks = payload?.picks.length ?? 0
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PicksSkeletonGrid />
+      </div>
+    )
+  }
+
+  if (error || !payload) {
     return (
       <div
         className="rounded-3xl border border-[#C9082A]/20 px-6 py-12 text-center"
         style={glass}
       >
-        <p className="text-sm font-semibold text-[#C9082A]">Failed to load predictions</p>
+        <p className="text-sm font-semibold text-[#C9082A]">Failed to load picks</p>
         <p className="mt-1 text-xs text-[#C9082A]/60">{error ?? "Unknown error"}</p>
       </div>
     )
   }
 
-  const noData = data.totalPredictions === 0
+  const seasonLabel = payload.season
 
   return (
-    <div className="flex flex-col gap-6">
-      <p className="max-w-2xl text-sm leading-relaxed text-slate-500">
-        Open picks for{" "}
-        <span className="font-medium text-slate-700">{data.trackerSeason}</span> are scheduled
-        regular-season games (today onward) that already have a prediction row but no final score yet.
-        History below is every graded pick in the database after deduplicating by game (regular season,
-        Oct–Apr dates only — playoff slates are excluded). For raw win-rate research without prediction
-        rows, see{" "}
-        <Link href="/analysis" className="font-medium text-[#17408B] underline-offset-2 hover:underline">
-          Analysis
-        </Link>
-        .
-      </p>
-
-      {/* ── Upcoming slate ────────────────────────────────────────── */}
-      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-        <p className="text-sm font-semibold text-slate-800">Upcoming picks (this season)</p>
-        <p className="mt-0.5 text-xs text-slate-400">
-          {data.trackerSeason} · scheduled games from today with unresolved predictions
+    <div className="flex flex-col gap-8">
+      {/* Header */}
+      <div className="flex flex-col gap-2">
+        <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+          Rest Advantage Picks
+        </h1>
+        <p className="text-lg font-medium tracking-tight text-[#17408B]">
+          {seasonLabel} Season
         </p>
-
-        {data.upcomingPicks.length === 0 ? (
-          <p className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-white/30 px-4 py-8 text-center text-xs leading-relaxed text-slate-500">
-            No open predictions on the schedule right now. Between seasons, or before the daily sync
-            loads new games, this stays empty — it will fill again when the regular-season schedule is in
-            the database and the pipeline writes fresh rows.
-          </p>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr
-                  style={{ background: "rgba(23,64,139,0.04)" }}
-                  className="rounded-lg"
-                >
-                  <th className="rounded-l-lg px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
-                    Date
-                  </th>
-                  <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
-                    Matchup
-                  </th>
-                  <th className="rounded-r-lg px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
-                    Predicted edge
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.upcomingPicks.map((p) => (
-                  <tr
-                    key={p.gameId}
-                    className="border-t border-slate-100/60 transition-colors hover:bg-white/40"
-                  >
-                    <td className="px-3 py-3 text-slate-500">
-                      {format(parseISO(p.date), "MMM d, yyyy")}
-                    </td>
-                    <td className="px-3 py-3 font-medium text-slate-800">
-                      {p.awayTeam.abbreviation}
-                      <span className="mx-1 font-normal text-slate-300">@</span>
-                      {p.homeTeam.abbreviation}
-                    </td>
-                    <td className="px-3 py-3 text-slate-700">
-                      <span className="font-semibold text-[#17408B]">
-                        {p.predictedAdvantageTeam.abbreviation}
-                      </span>{" "}
-                      +{p.differential.toFixed(1)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ── 1. Hero accuracy stat ─────────────────────────────────── */}
-      <div
-        className="rounded-3xl border border-white/50 px-6 py-10 text-center"
-        style={glass}
-      >
-        <p
-          className={cn(
-            "text-7xl font-black tracking-tight",
-            noData ? "text-slate-300" : "text-[#17408B]"
-          )}
-        >
-          {noData ? "—" : `${data.accuracyPct}%`}
-        </p>
-        <p className="mt-2 text-base font-semibold text-slate-700">Prediction Accuracy</p>
-        <p className="mt-1 text-sm text-slate-400">
-          {noData
-            ? "No graded predictions yet — run the backfill script to populate history"
-            : `${data.correctPredictions.toLocaleString()} of ${data.totalPredictions.toLocaleString()} predictions correct`}
+        <p className="max-w-2xl text-sm leading-relaxed text-slate-500">
+          Upcoming games ranked by our fatigue model. Higher rest advantage = stronger
+          signal.
         </p>
       </div>
 
-      {/* ── 2. Confidence tier breakdown ──────────────────────────── */}
+      {/* Summary */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {data.tiers.map((tier) => {
-          const cfg = TIER_CONFIG[tier.label]
-          const isEmpty = tier.games === 0
-          return (
-            <div
-              key={tier.label}
-              className="rounded-3xl border border-white/50 p-6"
-              style={glass}
-            >
-              <p className={cn("text-xs font-semibold uppercase tracking-wider", cfg.textClass)}>
-                {cfg.title}
-              </p>
-              <p className="mt-0.5 text-[11px] text-slate-400">{cfg.range}</p>
-              <p
+        <div className="rounded-2xl border border-white/50 px-5 py-4" style={glass}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Total picks
+          </p>
+          <p className="mt-1 font-heading text-2xl font-bold tabular-nums text-slate-900">
+            {payload.summary.total}
+          </p>
+        </div>
+        <div className="rounded-2xl border border-white/50 px-5 py-4" style={glass}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-[#C9082A]">
+            High confidence (RA ≥ 5)
+          </p>
+          <p className="mt-1 font-heading text-2xl font-bold tabular-nums text-[#C9082A]">
+            {payload.summary.highConfidence}
+          </p>
+        </div>
+        <div className="rounded-2xl border border-white/50 px-5 py-4" style={glass}>
+          <p className="text-xs font-semibold uppercase tracking-wider text-[#17408B]">
+            Medium confidence (RA 2–5)
+          </p>
+          <p className="mt-1 font-heading text-2xl font-bold tabular-nums text-[#17408B]">
+            {payload.summary.mediumConfidence}
+          </p>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Confidence
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["all", "All"],
+                ["high", "High"],
+                ["medium", "Medium"],
+                ["low", "Low"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setTierFilter(key)}
                 className={cn(
-                  "mt-3 text-5xl font-black tracking-tight",
-                  isEmpty ? "text-slate-300" : "text-slate-900"
+                  glassPill,
+                  tierFilter === key &&
+                    "bg-[#17408B]/12 text-[#17408B] ring-2 ring-[#17408B]/25"
                 )}
               >
-                {pct(tier.accuracyPct)}
-              </p>
-              <p className="mt-1.5 text-xs text-slate-400">
-                {isEmpty ? "Awaiting data" : `${tier.correct} / ${tier.games} correct`}
-              </p>
-              {!isEmpty && (
-                <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className={cn("h-full rounded-full transition-all duration-700", cfg.bgClass)}
-                    style={{ width: `${tier.accuracyPct}%` }}
-                  />
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
-      {/* ── 3. Accuracy by season ─────────────────────────────────── */}
-      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-        <p className="text-sm font-semibold text-slate-800">Accuracy by season</p>
-        <p className="mt-0.5 text-xs text-slate-400">
-          Win rate of the prediction rule for each NBA season in the database
-        </p>
-
-        <div className="mt-6 h-56">
-          {data.seasonAccuracyTrend.length === 0 ? (
-            <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200">
-              <p className="text-xs text-slate-400">
-                Season breakdown appears once graded predictions exist
-              </p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={data.seasonAccuracyTrend}
-                margin={{ top: 8, right: 24, left: 0, bottom: 0 }}
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Time range
+          </span>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["today", "Today"],
+                ["7d", "Next 7 Days"],
+                ["14d", "Next 14 Days"],
+                ["all", "All"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setRangeFilter(key)}
+                className={cn(
+                  glassPill,
+                  rangeFilter === key &&
+                    "bg-[#17408B]/12 text-[#17408B] ring-2 ring-[#17408B]/25"
+                )}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" />
-                <XAxis
-                  dataKey="season"
-                  interval="preserveStartEnd"
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  domain={[40, 70]}
-                  tickFormatter={(v: number) => `${v}%`}
-                  tick={{ fontSize: 11, fill: "#94a3b8" }}
-                  tickLine={false}
-                  axisLine={false}
-                  width={40}
-                />
-                <Tooltip
-                  cursor={{ stroke: "rgba(23,64,139,0.15)", strokeWidth: 1 }}
-                  content={(props: TooltipContentProps) => (
-                    <SeasonAccuracyTooltip {...props} />
-                  )}
-                />
-                <ReferenceLine
-                  y={50}
-                  stroke="#C9082A"
-                  strokeDasharray="4 4"
-                  strokeOpacity={0.45}
-                  label={{
-                    value: "Coin Flip",
-                    position: "insideTopRight",
-                    fontSize: 10,
-                    fill: "#C9082A",
-                    opacity: 0.7,
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="accuracyPct"
-                  stroke="#17408B"
-                  strokeWidth={2.5}
-                  dot={{ fill: "#17408B", r: 3, strokeWidth: 0 }}
-                  activeDot={{ r: 5, fill: "#17408B", strokeWidth: 2, stroke: "rgba(23,64,139,0.2)" }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Sort
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSortBy("date")}
+              className={cn(
+                glassPill,
+                sortBy === "date" &&
+                  "bg-[#17408B]/12 text-[#17408B] ring-2 ring-[#17408B]/25"
+              )}
+            >
+              Date ↑
+            </button>
+            <button
+              type="button"
+              onClick={() => setSortBy("ra")}
+              className={cn(
+                glassPill,
+                sortBy === "ra" &&
+                  "bg-[#17408B]/12 text-[#17408B] ring-2 ring-[#17408B]/25"
+              )}
+            >
+              RA ↓
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* ── 4. Recent predictions table (last 20) ─────────────────── */}
-      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-        <p className="mb-4 text-sm font-semibold text-slate-800">Recent graded predictions</p>
+      <p className="text-sm text-slate-500">
+        Showing{" "}
+        <span className="font-heading font-semibold text-slate-800">
+          {filteredSorted.length}
+        </span>{" "}
+        of {totalPicks} picks
+      </p>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr
-                style={{ background: "rgba(23,64,139,0.04)" }}
-                className="rounded-lg"
-              >
-                <th className="rounded-l-lg px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
-                  Date
-                </th>
-                <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
-                  Matchup
-                </th>
-                <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
-                  Predicted Edge
-                </th>
-                <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-slate-400">
-                  Actual Winner
-                </th>
-                <th className="rounded-r-lg px-3 py-2.5 text-center font-semibold uppercase tracking-wider text-slate-400">
-                  Result
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.recentPredictions.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="px-3 py-10 text-center text-slate-400"
-                  >
-                    Graded predictions will appear here
-                  </td>
-                </tr>
-              ) : (
-                data.recentPredictions.map((p) => (
-                  <tr
-                    key={`${p.date}-${p.homeTeam.id}-${p.awayTeam.id}`}
-                    className="border-t border-slate-100/60 transition-colors hover:bg-white/40"
-                  >
-                    <td className="px-3 py-3 text-slate-500">
-                      {format(parseISO(p.date), "MMM d, yyyy")}
-                    </td>
-                    <td className="px-3 py-3 font-medium text-slate-800">
-                      {p.awayTeam.abbreviation}
-                      <span className="mx-1 font-normal text-slate-300">@</span>
-                      {p.homeTeam.abbreviation}
-                    </td>
-                    <td className="px-3 py-3 text-slate-700">
-                      <span className="font-semibold text-[#17408B]">
-                        {p.predictedAdvantageTeam.abbreviation}
-                      </span>{" "}
-                      +{Math.abs(p.differential).toFixed(1)}
-                    </td>
-                    <td className="px-3 py-3 font-medium text-slate-700">
-                      {p.actualWinner.abbreviation}
-                    </td>
-                    <td className="px-3 py-3 text-center">
-                      <span
-                        className={cn(
-                          "inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-bold",
-                          p.correct
-                            ? "bg-emerald-50 text-emerald-600"
-                            : "bg-red-50 text-[#C9082A]"
-                        )}
-                      >
-                        {p.correct ? "✓ Correct" : "✗ Wrong"}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      {/* Grid */}
+      {totalPicks === 0 ? (
+        <div
+          className="flex flex-col items-center gap-4 rounded-3xl border border-white/50 px-6 py-16 text-center"
+          style={glass}
+        >
+          <span className="text-5xl" role="img" aria-label="basketball">
+            🏀
+          </span>
+          <h2 className="text-lg font-bold tracking-tight text-slate-800">
+            No upcoming picks
+          </h2>
+          <p className="max-w-md text-sm leading-relaxed text-slate-500">
+            The schedule hasn&apos;t been loaded yet, or the season has ended. Check back
+            when new games are on the calendar.
+          </p>
         </div>
-      </div>
-
-      {/* ── 5. Methodology explanation ────────────────────────────── */}
-      <div
-        className="rounded-3xl border border-slate-200/60 px-6 py-5"
-        style={{
-          background: "rgba(255, 255, 255, 0.4)",
-          backdropFilter: "blur(16px)",
-          WebkitBackdropFilter: "blur(16px)",
-        }}
-      >
-        <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">
-          Methodology
-        </p>
-        <p className="mt-2 text-sm leading-relaxed text-slate-500">
-          Predictions are based on rest advantage differential — the difference in computed fatigue
-          scores between the two teams. The more-rested team (lower fatigue score) is predicted to win.
-          A higher differential indicates greater confidence. Counts are limited to regular-season games
-          on the standard Oct–Apr calendar window, with one graded row per game.
-        </p>
-      </div>
+      ) : filteredSorted.length === 0 ? (
+        <div
+          className="rounded-3xl border border-white/50 px-6 py-12 text-center text-sm text-slate-500"
+          style={glass}
+        >
+          No picks match your filters. Try widening the time range or confidence filter.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredSorted.map((pick) => (
+            <PickCard key={pick.gameId} pick={pick} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

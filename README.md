@@ -90,6 +90,7 @@ Seed teams and historical games using the Python tooling in `scripts/` as needed
 | `NEXT_PUBLIC_SUPABASE_URL` | Client + server | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client + server | Supabase anon key (browser-safe) |
 | `CRON_SECRET` | Server only | Bearer token for `GET /api/cron/update` |
+| `THE_ODDS_API_KEY` | Server only | Free API key from [the-odds-api.com](https://the-odds-api.com) (optional; enables moneyline odds) |
 
 ### Run locally
 

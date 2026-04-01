@@ -226,3 +226,30 @@ export interface GameSearchResponse {
   page: number;
   limit: number;
 }
+
+// ─── Picks page (upcoming slate) ─────────────────────────────────
+
+export interface UpcomingPickExtended {
+  gameId: number;
+  date: string;
+  homeTeam: { abbreviation: string; name: string; city: string };
+  awayTeam: { abbreviation: string; name: string; city: string };
+  predictedAdvantageTeam: { abbreviation: string; name: string } | null;
+  differential: number | null;
+  tier: "high" | "medium" | "low" | null;
+  homeFatigueScore: number | null;
+  awayFatigueScore: number | null;
+  moneyline: { home: number; away: number } | null;
+  season: string;
+}
+
+export interface PicksResponse {
+  season: string;
+  picks: UpcomingPickExtended[];
+  summary: {
+    total: number;
+    highConfidence: number;
+    mediumConfidence: number;
+    lowConfidence: number;
+  };
+}

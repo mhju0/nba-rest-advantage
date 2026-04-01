@@ -9,6 +9,8 @@ export const NBA_TEAM_IDS: Record<string, number> = {
   ATL: 1610612737,
   BOS: 1610612738,
   BKN: 1610612751,
+  /** Historical: New Jersey Nets (same franchise ID as BKN). */
+  NJN: 1610612751,
   CHA: 1610612766,
   CHI: 1610612741,
   CLE: 1610612739,
@@ -21,12 +23,20 @@ export const NBA_TEAM_IDS: Record<string, number> = {
   LAC: 1610612746,
   LAL: 1610612747,
   MEM: 1610612763,
+  /** Historical: Vancouver Grizzlies (same franchise ID as MEM). */
+  VAN: 1610612763,
   MIA: 1610612748,
   MIL: 1610612749,
   MIN: 1610612750,
   NOP: 1610612740,
+  /** Historical: New Orleans Hornets (same franchise ID as NOP). */
+  NOH: 1610612740,
+  /** Historical: New Orleans/Oklahoma City Hornets. */
+  NOK: 1610612740,
   NYK: 1610612752,
   OKC: 1610612760,
+  /** Historical: Seattle SuperSonics (same franchise ID as OKC). */
+  SEA: 1610612760,
   ORL: 1610612753,
   PHI: 1610612755,
   PHX: 1610612756,
@@ -36,4 +46,6 @@ export const NBA_TEAM_IDS: Record<string, number> = {
   TOR: 1610612761,
   UTA: 1610612762,
   WAS: 1610612764,
+  /** Historical: Washington Bullets (same franchise ID as WAS). */
+  WSB: 1610612764,
 }

@@ -45,6 +45,9 @@ export const games = pgTable(
     spread: decimal("spread"),
     /** Overtime periods beyond regulation (1 = one OT, 2 = double OT, …). */
     overtimePeriods: integer("overtime_periods").notNull().default(0),
+    /** American odds (nullable until odds feed is wired). */
+    homeMoneyline: integer("home_moneyline"),
+    awayMoneyline: integer("away_moneyline"),
   },
   (t) => [
     index("games_date_idx").on(t.date),

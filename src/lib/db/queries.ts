@@ -11,10 +11,10 @@ import {
 import type {
   FatigueInfo,
   GameDateCount,
-  GameDetailResponse,
   GameResponse,
+  PicksResponse,
   RestAdvantage,
-  TeamRecentResultGame,
+  UpcomingPickExtended,
 } from "@/types";
 
 const NEUTRAL_THRESHOLD = 0.5;
@@ -697,6 +697,157 @@ export async function getUpcomingPredictionsForSeason(
     predictedTeamAbbreviation: r.predictedTeamAbbreviation,
     differential: String(r.differential),
   }));
+}
+
+function computePickTier(differential: number | null): UpcomingPickExtended["tier"] {
+  if (differential === null || Number.isNaN(differential)) return null;
+  const absDiff = Math.abs(differential);
+  if (absDiff >= 5) return "high";
+  if (absDiff >= 2) return "medium";
+  return "low";
+}
+
+/**
+ * Scheduled regular-season games for `season` on/after `fromDateYmd`, with latest prediction
+ * (any row), latest fatigue per side, and optional moneylines. Ordered by date, then by
+ * |rest advantage differential| descending.
+ */
+export async function getPicksForSeason(
+  season: string,
+  fromDateYmd: string
+): Promise<PicksResponse> {
+  const homeTeam = alias(teams, "picks_home_team");
+  const awayTeam = alias(teams, "picks_away_team");
+  const predTeam = alias(teams, "picks_predicted_team");
+  const homeFatigue = latestFatigueSubquery("picks_home_fatigue_latest");
+  const awayFatigue = latestFatigueSubquery("picks_away_fatigue_latest");
+
+  const latestPred = db
+    .selectDistinctOn([predictions.gameId], {
+      gameId: predictions.gameId,
+      predictedAdvantageTeamId: predictions.predictedAdvantageTeamId,
+      restAdvantageDifferential: predictions.restAdvantageDifferential,
+    })
+    .from(predictions)
+    .orderBy(predictions.gameId, desc(predictions.createdAt))
+    .as("picks_latest_pred");
+
+  const rows = await db
+    .select({
+      gameId: games.id,
+      date: games.date,
+      season: games.season,
+      homeAbbr: homeTeam.abbreviation,
+      homeName: homeTeam.name,
+      homeCity: homeTeam.city,
+      awayAbbr: awayTeam.abbreviation,
+      awayName: awayTeam.name,
+      awayCity: awayTeam.city,
+      predAbbr: predTeam.abbreviation,
+      predName: predTeam.name,
+      differential: latestPred.restAdvantageDifferential,
+      homeFatigueScore: homeFatigue.score,
+      awayFatigueScore: awayFatigue.score,
+      homeMoneyline: games.homeMoneyline,
+      awayMoneyline: games.awayMoneyline,
+    })
+    .from(games)
+    .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
+    .innerJoin(awayTeam, eq(games.awayTeamId, awayTeam.id))
+    .leftJoin(latestPred, eq(latestPred.gameId, games.id))
+    .leftJoin(predTeam, eq(latestPred.predictedAdvantageTeamId, predTeam.id))
+    .leftJoin(
+      homeFatigue,
+      and(eq(homeFatigue.gameId, games.id), eq(homeFatigue.teamId, games.homeTeamId))
+    )
+    .leftJoin(
+      awayFatigue,
+      and(eq(awayFatigue.gameId, games.id), eq(awayFatigue.teamId, games.awayTeamId))
+    )
+    .where(
+      and(
+        eq(games.status, "scheduled"),
+        gte(games.date, fromDateYmd),
+        eq(games.season, season),
+        eq(games.gameType, "regular")
+      )
+    )
+    .orderBy(
+      asc(games.date),
+      desc(sql`abs(coalesce(cast(${latestPred.restAdvantageDifferential} as numeric), 0))`)
+    );
+
+  const picks: UpcomingPickExtended[] = rows.map((r) => {
+    const diffRaw = r.differential;
+    const parsed =
+      diffRaw === null || diffRaw === undefined ? null : parseFloat(String(diffRaw));
+    const differential = parsed !== null && Number.isNaN(parsed) ? null : parsed;
+
+    const tier = computePickTier(differential);
+
+    const moneyline =
+      r.homeMoneyline != null && r.awayMoneyline != null
+        ? { home: r.homeMoneyline, away: r.awayMoneyline }
+        : null;
+
+    const hf = r.homeFatigueScore;
+    const af = r.awayFatigueScore;
+    const homeFatigueScore =
+      hf !== null && hf !== undefined ? parseFloat(String(hf)) : null;
+    const awayFatigueScore =
+      af !== null && af !== undefined ? parseFloat(String(af)) : null;
+
+    return {
+      gameId: r.gameId,
+      date: String(r.date),
+      homeTeam: {
+        abbreviation: r.homeAbbr,
+        name: r.homeName,
+        city: r.homeCity,
+      },
+      awayTeam: {
+        abbreviation: r.awayAbbr,
+        name: r.awayName,
+        city: r.awayCity,
+      },
+      predictedAdvantageTeam:
+        r.predAbbr != null && r.predName != null
+          ? { abbreviation: r.predAbbr, name: r.predName }
+          : null,
+      differential,
+      tier,
+      homeFatigueScore:
+        homeFatigueScore !== null && !Number.isNaN(homeFatigueScore)
+          ? homeFatigueScore
+          : null,
+      awayFatigueScore:
+        awayFatigueScore !== null && !Number.isNaN(awayFatigueScore)
+          ? awayFatigueScore
+          : null,
+      moneyline,
+      season: String(r.season),
+    };
+  });
+
+  let highConfidence = 0;
+  let mediumConfidence = 0;
+  let lowConfidence = 0;
+  for (const p of picks) {
+    if (p.tier === "high") highConfidence++;
+    else if (p.tier === "medium") mediumConfidence++;
+    else if (p.tier === "low") lowConfidence++;
+  }
+
+  return {
+    season,
+    picks,
+    summary: {
+      total: picks.length,
+      highConfidence,
+      mediumConfidence,
+      lowConfidence,
+    },
+  };
 }
 
 // ─── Game search query ────────────────────────────────────────────

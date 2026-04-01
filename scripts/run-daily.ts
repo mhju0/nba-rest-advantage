@@ -6,7 +6,8 @@
  * Usage: pnpm exec tsx scripts/run-daily.ts YYYY-MM-DD
  */
 
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { addDays, format, parseISO } from "date-fns";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as Schema from "@/lib/db/schema";
 import { fatigueScores, games, predictions, teams } from "@/lib/db/schema";
@@ -33,6 +34,7 @@ async function main(): Promise<void> {
   const teamRows = await appDb.select().from(teams);
   const teamById = new Map(teamRows.map((t) => [t.id, t]));
 
+  const endDate = format(addDays(parseISO(dateArg), 14), "yyyy-MM-dd");
   const todaysGames = await appDb
     .select({
       id: games.id,
@@ -43,13 +45,13 @@ async function main(): Promise<void> {
       status: games.status,
     })
     .from(games)
-    .where(eq(games.date, dateArg))
-    .orderBy(asc(games.id));
+    .where(and(gte(games.date, dateArg), lte(games.date, endDate)))
+    .orderBy(asc(games.date), asc(games.id));
 
   const gameIds = todaysGames.map((g) => g.id);
 
   if (gameIds.length === 0) {
-    console.log(`[run-daily] No games in DB for ${dateArg}; skipping fatigue & predictions.`);
+    console.log(`[run-daily] No games in DB for ${dateArg}–${endDate}; skipping fatigue & predictions.`);
     return;
   }
 
@@ -187,8 +189,19 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `[run-daily] ${dateArg}: fatigue rows written=${fatigueRows}, predictions written=${predictionRows}`
+    `[run-daily] ${dateArg}–${endDate}: fatigue rows written=${fatigueRows}, predictions written=${predictionRows}`
   );
+
+  if (process.env.THE_ODDS_API_KEY?.trim()) {
+    console.log("[run-daily] fetching odds...");
+    try {
+      const { fetchAndStoreOdds } = await import("./fetch_odds_lib");
+      const oddsResult = await fetchAndStoreOdds(appDb);
+      console.log(`[run-daily] odds: updated ${oddsResult.updated} games`);
+    } catch (err) {
+      console.warn("[run-daily] odds fetch failed (non-fatal):", err);
+    }
+  }
 }
 
 main().catch((err) => {
