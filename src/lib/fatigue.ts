@@ -218,19 +218,22 @@ function roadSegmentLoad(
   return { load, hasCoastToCoastRoadSwing: coast };
 }
 
-function calendarDaysBetween(earlierYmd: string, laterYmd: string): number {
-  return differenceInCalendarDays(parseISO(laterYmd), parseISO(earlierYmd));
-}
-
 function isSameArena(lat1: number, lon1: number, lat2: number, lon2: number): boolean {
   return haversineDistance(lat1, lon1, lat2, lon2) < SAME_ARENA_MILES;
 }
 
 /**
- * One leg or chain of legs between consecutive games. Home↔home = 0. Away↔away with a
- * single off day uses a direct arena→arena hop; with 2+ calendar days between away games,
- * the model assumes the team returns home then travels to the next venue (NBA-typical
- * for non–back-to-back road swings). Miles are great-circle (haversine), not routing.
+ * One leg between consecutive games (great-circle / haversine, not road routing).
+ *
+ * - **Home → home:** 0 (no relocation).
+ * - **Home → away:** home arena → opponent arena.
+ * - **Away → home:** last opponent arena → home arena.
+ * - **Away → away:** previous opponent arena → next opponent arena (direct road leg).
+ *   We do **not** insert a round trip through the team’s home city on multi-day gaps;
+ *   NBA clubs typically stay on the road for West/East swings, and the old “fly home
+ *   between every pair of away games if gap ≥ 2 days” rule massively over-counted miles.
+ * - **First game ever in chain (`previousGame === null`):** if tonight is away, count
+ *   home → tonight’s arena (inbound to the trip or one-off road game).
  */
 function travelMilesBetweenGames(
   previousGame: RecentGame | null,
@@ -238,8 +241,7 @@ function travelMilesBetweenGames(
   currentArenaLat: number,
   currentArenaLon: number,
   teamHomeLat: number,
-  teamHomeLon: number,
-  daysBetween: number
+  teamHomeLon: number
 ): number {
   if (previousGame === null) {
     if (currentGameIsHome) {
@@ -268,13 +270,6 @@ function travelMilesBetweenGames(
     return haversineDistance(prevArenaLat, prevArenaLon, teamHomeLat, teamHomeLon);
   }
 
-  if (daysBetween >= 2) {
-    return (
-      haversineDistance(prevArenaLat, prevArenaLon, teamHomeLat, teamHomeLon) +
-      haversineDistance(teamHomeLat, teamHomeLon, currentArenaLat, currentArenaLon)
-    );
-  }
-
   return haversineDistance(prevArenaLat, prevArenaLon, currentArenaLat, currentArenaLon);
 }
 
@@ -301,8 +296,7 @@ function computeTotalTravelMiles(
       currentVenueLat,
       currentVenueLon,
       teamHomeLat,
-      teamHomeLon,
-      0
+      teamHomeLon
     );
   }
 
@@ -316,15 +310,13 @@ function computeTotalTravelMiles(
 
   if (firstIdxInWindow === -1) {
     const lastGame = recentGames[recentGames.length - 1];
-    const gapToCurrent = calendarDaysBetween(lastGame.date, gameDate);
     return travelMilesBetweenGames(
       lastGame,
       currentGameIsHome,
       currentVenueLat,
       currentVenueLon,
       teamHomeLat,
-      teamHomeLon,
-      gapToCurrent
+      teamHomeLon
     );
   }
 
@@ -344,16 +336,12 @@ function computeTotalTravelMiles(
     chainStartLat,
     chainStartLon,
     teamHomeLat,
-    teamHomeLon,
-    prevBeforeChain === null
-      ? 0
-      : calendarDaysBetween(prevBeforeChain.date, chainStart.date)
+    teamHomeLon
   );
 
   for (let i = firstIdxInWindow; i < recentGames.length - 1; i++) {
     const prev = recentGames[i]!;
     const cur = recentGames[i + 1]!;
-    const gap = calendarDaysBetween(prev.date, cur.date);
     const curArenaLat = cur.isHome ? cur.teamLat : cur.opponentLat;
     const curArenaLon = cur.isHome ? cur.teamLon : cur.opponentLon;
     total += travelMilesBetweenGames(
@@ -362,21 +350,18 @@ function computeTotalTravelMiles(
       curArenaLat,
       curArenaLon,
       teamHomeLat,
-      teamHomeLon,
-      gap
+      teamHomeLon
     );
   }
 
   const lastGame = recentGames[recentGames.length - 1]!;
-  const gapToCurrent = calendarDaysBetween(lastGame.date, gameDate);
   total += travelMilesBetweenGames(
     lastGame,
     currentGameIsHome,
     currentVenueLat,
     currentVenueLon,
     teamHomeLat,
-    teamHomeLon,
-    gapToCurrent
+    teamHomeLon
   );
 
   return total;

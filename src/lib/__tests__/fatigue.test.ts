@@ -292,7 +292,7 @@ describe("calculateFatigue", () => {
     expect(r.travelDistanceMiles).toBeLessThan(3800);
   });
 
-  it("away → away with 2+ calendar days off assumes travel via home (more miles than a 1-day road leg)", () => {
+  it("away → away uses direct arena legs regardless of rest days (no phantom home round trip)", () => {
     const recent: RecentGame[] = [
       baseRecent({
         date: "2025-01-01",
@@ -305,9 +305,7 @@ describe("calculateFatigue", () => {
     const oneDayGap = fatigueAwayTeam("2025-01-02", recent, false, BOS_LAT, BOS_LON);
     const multiDayGap = fatigueAwayTeam("2025-01-04", recent, false, BOS_LAT, BOS_LON);
 
-    expect(multiDayGap.travelDistanceMiles).toBeGreaterThan(
-      oneDayGap.travelDistanceMiles + 2000
-    );
+    expect(multiDayGap.travelDistanceMiles).toBe(oneDayGap.travelDistanceMiles);
   });
 });
 
