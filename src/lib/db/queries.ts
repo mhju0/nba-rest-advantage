@@ -713,6 +713,9 @@ function computePickTier(differential: number | null): UpcomingPickExtended["tie
  * Scheduled regular-season games for `season` on/after `fromDateYmd`, with latest prediction
  * (any row), latest fatigue per side, and optional moneylines. Ordered by date, then by
  * |rest advantage differential| descending.
+ *
+ * Same regular-season calendar window as `getUpcomingPredictionsForSeason` (Oct 1–Apr 30
+ * for the season label) so mis-tagged playoff dates are excluded.
  */
 export async function getPicksForSeason(
   season: string,
@@ -768,10 +771,11 @@ export async function getPicksForSeason(
     )
     .where(
       and(
+        eq(games.season, season),
+        eq(games.gameType, "regular"),
         eq(games.status, "scheduled"),
         gte(games.date, fromDateYmd),
-        eq(games.season, season),
-        eq(games.gameType, "regular")
+        gameDateWithinRegularSeasonCalendar
       )
     )
     .orderBy(

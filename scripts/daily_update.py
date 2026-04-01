@@ -7,8 +7,8 @@ Daily NBA pipeline for GitHub Actions (and local runs):
    stale/wrong scores (not only “yesterday”), inserts missing games, and loads upcoming
    slates (e.g. April) without re-running the full season fetch.
 
-2. Refresh **overtime_periods** for **yesterday’s** final regular-season games only
-   (bounded BoxScoreSummary calls).
+2. Refresh **overtime_periods** for **final** regular-season games in the LeagueGameFinder
+   window whose dates fall in **[today − LOOKBACK_DAYS, today)** (bounded BoxScoreSummary calls).
 
 3. Run `pnpm exec tsx scripts/run-daily.ts <today ET>` to refresh fatigue for today’s
    slate and regenerate open predictions.
@@ -32,15 +32,18 @@ _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+from fetch_nba_schedule_cdn import (
+    build_cdn_records,
+    fetch_cdn_schedule,
+    upsert_game_records as upsert_cdn_records,
+)
 from fetch_schedule import (
     fetch_league_df_date_range,
     load_team_id_map,
     pair_games_from_date_range_df,
-    upsert_game_records,
+    upsert_game_records as upsert_stats_window_records,
 )
 from nba_ot_periods import fetch_overtime_periods
-from fetch_nba_schedule_cdn import build_cdn_records, fetch_cdn_schedule, upsert_game_records
-from fetch_schedule import load_team_id_map
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -112,19 +115,15 @@ def main() -> None:
     print("[daily_update] fetching CDN schedule to seed future games …")
     cdn_data = fetch_cdn_schedule()
 
-    finder = leaguegamefinder.LeagueGameFinder(
-        date_from_nullable=yesterday_str,
-        date_to_nullable=yesterday_str,
-        league_id_nullable="00",
-        timeout=90,
-    )
-    df = finder.get_data_frames()[0]
+    df = fetch_league_df_date_range(start_str, end_str)
 
     conn = psycopg2.connect(database_url)
     try:
         team_map = load_team_id_map(conn)
-        cdn_records, cdn_season = build_cdn_records(cdn_data, team_map)
-        cdn_count = upsert_game_records(conn, cdn_records)
+        cdn_records, cdn_season = build_cdn_records(
+            cdn_data, team_map, utc_month_filter=None
+        )
+        cdn_count = upsert_cdn_records(conn, cdn_records)
         print(f"[daily_update] CDN upserted {cdn_count} games for season {cdn_season}.")
 
         if df.empty:
@@ -133,7 +132,7 @@ def main() -> None:
         else:
             # Skip per-game OT during bulk pairing (hundreds of games); refresh yesterday below.
             records = pair_games_from_date_range_df(df, team_map, force_skip_ot=True)
-            n = upsert_game_records(conn, records)
+            n = upsert_stats_window_records(conn, records)
             conn.commit()
             print(f"[daily_update] upserted {n} regular-season game row(s) in window.")
 

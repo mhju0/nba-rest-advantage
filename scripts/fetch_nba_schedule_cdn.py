@@ -1,10 +1,23 @@
-"""Fetch the full current-season schedule from the NBA CDN and upsert into games table.
+"""Fetch the NBA schedule from the official static CDN and upsert into `games`.
 
-Uses the static JSON endpoint (no auth required):
+Endpoint (no auth):
   https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json
 
-Only regular-season games (gameId prefix '002') are processed.
-Safe to run multiple times — uses ON CONFLICT DO UPDATE.
+JSON path: ``leagueSchedule.gameDates[]`` → each entry has ``games[]``.
+
+We walk ``gameDates``, keep regular-season rows (stats ``gameId`` prefix ``002``),
+and map fields to the same shape as ``fetch_schedule.upsert_game_records`` /
+Drizzle ``games`` table:
+
+  external_id, date, season, home_team_id, away_team_id,
+  home_score, away_score, status, overtime_periods, game_type
+
+Tip-off time uses ``gameDateTimeUTC``; the ``date`` column is the UTC calendar
+date of that instant (``YYYY-MM-DD``), consistent for indexing and queries.
+
+Optional ``utc_month_filter=(year, month)`` (e.g. ``(2026, 4)`` for April 2026)
+limits which games are emitted — use ``None`` for the full regular-season slate
+(e.g. ``daily_update.py``).
 """
 
 from __future__ import annotations
@@ -13,7 +26,10 @@ import json
 import os
 import sys
 import urllib.request
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any, Iterator
 
 import psycopg2
 from dotenv import load_dotenv
@@ -43,7 +59,21 @@ ON CONFLICT (external_id) DO UPDATE SET
 """
 
 
-def fetch_cdn_schedule() -> dict:
+@dataclass(frozen=True)
+class CdnScheduleGame:
+    """One row parsed from the CDN — aligns 1:1 with fields needed for ``games`` upsert."""
+
+    game_id: str
+    home_team_tricode: str
+    away_team_tricode: str
+    game_date_time_utc: str
+    game_date_utc: date
+    game_status: int
+    home_score_raw: int | None
+    away_score_raw: int | None
+
+
+def fetch_cdn_schedule() -> dict[str, Any]:
     """GET the NBA CDN schedule JSON."""
     req = urllib.request.Request(CDN_URL, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -52,7 +82,6 @@ def fetch_cdn_schedule() -> dict:
 
 def _derive_season_label(season_year: str) -> str:
     """Convert CDN seasonYear (e.g. '2025') to our label format (e.g. '2025-26')."""
-    # Already formatted (e.g. '2025-26') — return as-is
     if "-" in season_year:
         return season_year
     try:
@@ -62,69 +91,149 @@ def _derive_season_label(season_year: str) -> str:
         return season_year
 
 
-def build_cdn_records(
-    data: dict,
-    team_map: dict[str, int],
-) -> tuple[list[tuple], str]:
-    """Parse CDN JSON into upsert-ready tuples.
+def _parse_game_datetime_utc(game: dict[str, Any]) -> datetime | None:
+    """Parse tip-off from ``gameDateTimeUTC``, falling back to ``gameDateUTC``."""
+    raw = (game.get("gameDateTimeUTC") or game.get("gameDateUTC") or "").strip()
+    if not raw:
+        return None
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
+    except ValueError:
+        return None
 
-    Returns (records, season_label).
-    Each tuple matches the games table columns:
+
+def _iter_cdn_games_from_payload(data: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield each raw game object under ``leagueSchedule.gameDates[].games``."""
+    league = data.get("leagueSchedule") or {}
+    for game_date_entry in league.get("gameDates") or []:
+        for game in game_date_entry.get("games") or []:
+            yield game
+
+
+def parse_cdn_schedule_games(data: dict[str, Any]) -> list[CdnScheduleGame]:
+    """
+    Flatten ``leagueSchedule.gameDates`` into structured rows (regular season only).
+
+    Extracts:
+      - gameId
+      - homeTeam.teamTricode / awayTeam.teamTricode
+      - gameDateTimeUTC (tip) and UTC calendar date for ``games.date``
+      - gameStatus + scores for upsert status/score columns
+    """
+    out: list[CdnScheduleGame] = []
+    for game in _iter_cdn_games_from_payload(data):
+        game_id = str(game.get("gameId", "")).strip()
+        if len(game_id) < 3 or not game_id.startswith("002"):
+            continue
+
+        game_id = normalize_stats_game_id(game_id)
+
+        tip = _parse_game_datetime_utc(game)
+        if tip is None:
+            continue
+
+        home = game.get("homeTeam") or {}
+        away = game.get("awayTeam") or {}
+        home_tri = str(home.get("teamTricode", "")).strip().upper()
+        away_tri = str(away.get("teamTricode", "")).strip().upper()
+        if not home_tri or not away_tri:
+            continue
+
+        game_status = int(game.get("gameStatus", 1) or 1)
+        hs = home.get("score")
+        aw = away.get("score")
+        home_score_raw = int(hs) if hs is not None and str(hs).strip() != "" else None
+        away_score_raw = int(aw) if aw is not None and str(aw).strip() != "" else None
+
+        raw_iso = (game.get("gameDateTimeUTC") or game.get("gameDateUTC") or "").strip()
+        if not raw_iso:
+            raw_iso = tip.isoformat().replace("+00:00", "Z")
+
+        out.append(
+            CdnScheduleGame(
+                game_id=game_id,
+                home_team_tricode=home_tri,
+                away_team_tricode=away_tri,
+                game_date_time_utc=raw_iso,
+                game_date_utc=tip.date(),
+                game_status=game_status,
+                home_score_raw=home_score_raw,
+                away_score_raw=away_score_raw,
+            )
+        )
+    return out
+
+
+def filter_games_by_utc_month(
+    games: list[CdnScheduleGame],
+    year: int,
+    month: int,
+) -> list[CdnScheduleGame]:
+    """Keep games whose tip-off (UTC calendar date) falls in ``year``-``month``."""
+    return [g for g in games if g.game_date_utc.year == year and g.game_date_utc.month == month]
+
+
+def build_cdn_records(
+    data: dict[str, Any],
+    team_map: dict[str, int],
+    *,
+    utc_month_filter: tuple[int, int] | None = None,
+) -> tuple[list[tuple], str]:
+    """Parse CDN JSON into upsert-ready tuples for the ``games`` table.
+
+    Tuple order matches Drizzle / ``fetch_schedule`` inserts:
       (external_id, date, season, home_team_id, away_team_id,
        home_score, away_score, status, overtime_periods, game_type)
+
+    ``utc_month_filter`` — if ``(2026, 4)``, only April 2026 (UTC game date).
+    ``None`` = all regular-season games in the payload.
     """
-    league = data["leagueSchedule"]
+    league = data.get("leagueSchedule") or {}
     season_year = league.get("seasonYear", "")
-    season_label = _derive_season_label(season_year)
+    season_label = _derive_season_label(str(season_year))
+
+    parsed = parse_cdn_schedule_games(data)
+    if utc_month_filter is not None:
+        y, m = utc_month_filter
+        parsed = filter_games_by_utc_month(parsed, y, m)
 
     records: list[tuple] = []
     skipped = 0
 
-    for game_date_entry in league.get("gameDates", []):
-        for game in game_date_entry.get("games", []):
-            game_id = str(game.get("gameId", "")).strip()
+    for g in parsed:
+        home_tricode = normalize_abbr(g.home_team_tricode)
+        away_tricode = normalize_abbr(g.away_team_tricode)
 
-            # Only regular-season games (prefix 002)
-            if len(game_id) < 3 or not game_id.startswith("002"):
-                continue
+        if home_tricode not in team_map:
+            print(f"  WARNING: unknown home team '{home_tricode}', skipping {g.game_id}")
+            skipped += 1
+            continue
+        if away_tricode not in team_map:
+            print(f"  WARNING: unknown away team '{away_tricode}', skipping {g.game_id}")
+            skipped += 1
+            continue
 
-            game_id = normalize_stats_game_id(game_id)
+        if g.game_status == 3:
+            home_score = g.home_score_raw
+            away_score = g.away_score_raw
+            status = "final"
+        else:
+            home_score = None
+            away_score = None
+            status = "scheduled"
 
-            # CDN provides gameDateUTC like "2025-10-22T00:00:00Z"
-            game_date_utc = game.get("gameDateUTC", "")
-            date_str = game_date_utc[:10] if game_date_utc else ""
-            if not date_str:
-                skipped += 1
-                continue
+        date_str = g.game_date_utc.isoformat()
 
-            home_tricode = normalize_abbr(game["homeTeam"]["teamTricode"])
-            away_tricode = normalize_abbr(game["awayTeam"]["teamTricode"])
-
-            if home_tricode not in team_map:
-                print(f"  WARNING: unknown home team '{home_tricode}', skipping {game_id}")
-                skipped += 1
-                continue
-            if away_tricode not in team_map:
-                print(f"  WARNING: unknown away team '{away_tricode}', skipping {game_id}")
-                skipped += 1
-                continue
-
-            # gameStatus: 1=scheduled, 2=in-progress, 3=final
-            game_status = game.get("gameStatus", 1)
-            home_score_raw = game["homeTeam"].get("score", 0)
-            away_score_raw = game["awayTeam"].get("score", 0)
-
-            if game_status == 3:
-                home_score = int(home_score_raw) if home_score_raw else None
-                away_score = int(away_score_raw) if away_score_raw else None
-                status = "final"
-            else:
-                home_score = None
-                away_score = None
-                status = "scheduled"
-
-            records.append((
-                game_id,
+        records.append(
+            (
+                g.game_id,
                 date_str,
                 season_label,
                 team_map[home_tricode],
@@ -132,12 +241,13 @@ def build_cdn_records(
                 home_score,
                 away_score,
                 status,
-                0,          # overtime_periods (CDN doesn't provide this)
-                "regular",  # game_type
-            ))
+                0,
+                "regular",
+            )
+        )
 
     if skipped:
-        print(f"  Skipped {skipped} games (missing date or unknown team).")
+        print(f"  Skipped {skipped} games (unknown team tricode).")
 
     return records, season_label
 
@@ -158,7 +268,14 @@ def main() -> None:
     if not database_url:
         sys.exit("ERROR: DATABASE_URL not set in scripts/.env")
 
+    # Default standalone run: April 2026 only (UTC). Override with NBA_CDN_FULL_SEASON=1.
+    full = os.environ.get("NBA_CDN_FULL_SEASON", "").lower() in ("1", "true", "yes")
+    month_filter: tuple[int, int] | None = None if full else (2026, 4)
+
     print(f"Fetching NBA CDN schedule from:\n  {CDN_URL}\n")
+    if month_filter:
+        print(f"Filtering to UTC month {month_filter[0]:04d}-{month_filter[1]:02d} only "
+              f"(set NBA_CDN_FULL_SEASON=1 for entire regular season in payload).\n")
     data = fetch_cdn_schedule()
 
     conn = psycopg2.connect(database_url)
@@ -166,7 +283,7 @@ def main() -> None:
         team_map = load_team_id_map(conn)
         print(f"Loaded {len(team_map)} teams from DB.")
 
-        records, season_label = build_cdn_records(data, team_map)
+        records, season_label = build_cdn_records(data, team_map, utc_month_filter=month_filter)
         print(f"Parsed {len(records)} regular-season games for season {season_label}.")
 
         count = upsert_game_records(conn, records)
