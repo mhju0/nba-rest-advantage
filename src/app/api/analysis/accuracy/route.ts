@@ -15,7 +15,9 @@ import type {
   UpcomingPick,
 } from "@/types";
 
-export const revalidate = 86400; // 24 hours
+export const runtime = "nodejs";
+
+export const dynamic = "force-dynamic";
 
 /** Returns an accuracy percentage (0–100, 1 decimal). */
 function accuracyPct(correct: number, total: number): number {

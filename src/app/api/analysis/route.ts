@@ -9,8 +9,10 @@ import type {
   ThresholdBucket,
 } from "@/types";
 
-/** Cache this response for 24 hours — it only changes when new final scores arrive. */
-export const revalidate = 86400;
+export const runtime = "nodejs";
+
+/** DB-backed; do not prerender at build (avoids requiring `DATABASE_URL` during `next build`). */
+export const dynamic = "force-dynamic";
 
 const NEUTRAL_THRESHOLD = 0.5;
 const THRESHOLDS = [2, 3, 5, 7] as const;

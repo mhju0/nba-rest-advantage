@@ -5,8 +5,10 @@ import { getPicksForSeason } from "@/lib/db/queries";
 import { defaultNbaSeason } from "@/lib/nba-season";
 import type { ApiResponse, PicksResponse } from "@/types";
 
-/** Revalidate hourly — slate and predictions update during the day. */
-export const revalidate = 3600;
+export const runtime = "nodejs";
+
+/** Avoid static generation at build time (needs `DATABASE_URL` only at request time on Vercel). */
+export const dynamic = "force-dynamic";
 
 const emptyPicksData: PicksResponse = {
   season: "",
