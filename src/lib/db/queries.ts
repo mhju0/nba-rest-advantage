@@ -11,9 +11,11 @@ import {
 import type {
   FatigueInfo,
   GameDateCount,
+  GameDetailResponse,
   GameResponse,
   PicksResponse,
   RestAdvantage,
+  TeamRecentResultGame,
   UpcomingPickExtended,
 } from "@/types";
 

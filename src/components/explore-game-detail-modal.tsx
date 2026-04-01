@@ -11,8 +11,14 @@ import {
   RaBadge,
   TeamRow,
 } from "@/components/matchup-card"
+import { getTeamBranding } from "@/lib/team-history"
 import { cn } from "@/lib/utils"
-import type { ApiResponse, GameDetailResponse, TeamRecentResultGame } from "@/types"
+import type {
+  ApiResponse,
+  GameDetailResponse,
+  GameResponse,
+  TeamRecentResultGame,
+} from "@/types"
 
 const HIGHLIGHT_THRESHOLD = 1.0
 
@@ -58,6 +64,126 @@ function RecentResultsList({
           ))}
         </ul>
       )}
+    </div>
+  )
+}
+
+function ExploreGameDetailBody({
+  game,
+  detail,
+}: {
+  game: GameResponse
+  detail: GameDetailResponse
+}) {
+  const homeBrand = getTeamBranding(game.homeTeam.abbreviation, game.season, {
+    name: game.homeTeam.name,
+    city: game.homeTeam.city,
+  })
+  const awayBrand = getTeamBranding(game.awayTeam.abbreviation, game.season, {
+    name: game.awayTeam.name,
+    city: game.awayTeam.city,
+  })
+
+  const absDiff = Math.abs(game.restAdvantage?.differential ?? 0)
+  const showHighlight = !!game.restAdvantage && absDiff >= HIGHLIGHT_THRESHOLD
+  const advantageTeam = game.restAdvantage?.advantageTeam
+
+  const awayHighlight: "advantage" | "disadvantage" | "neutral" = showHighlight
+    ? advantageTeam === "away"
+      ? "advantage"
+      : "disadvantage"
+    : "neutral"
+
+  const homeHighlight: "advantage" | "disadvantage" | "neutral" = showHighlight
+    ? advantageTeam === "home"
+      ? "advantage"
+      : "disadvantage"
+    : "neutral"
+
+  return (
+    <div className="flex flex-col gap-3">
+      <GameStatusRow
+        status={game.status}
+        homeScore={game.homeScore}
+        awayScore={game.awayScore}
+      />
+      <p className="text-center font-heading text-lg font-bold text-slate-900">
+        {awayBrand.abbreviation}
+        <span className="mx-1.5 font-normal text-slate-300">@</span>
+        {homeBrand.abbreviation}
+      </p>
+      <p className="text-center text-[11px] text-slate-400">
+        {format(parseISO(game.date), "EEEE, MMMM d, yyyy")} · {game.season}
+      </p>
+
+      <TeamRow
+        side="AWAY"
+        abbreviation={game.awayTeam.abbreviation}
+        displayAbbreviation={awayBrand.abbreviation}
+        season={game.season}
+        teamFallback={{
+          name: game.awayTeam.name,
+          city: game.awayTeam.city,
+        }}
+        fatigue={game.awayFatigue}
+        score={game.awayFatigue?.score ?? null}
+        highlight={awayHighlight}
+      />
+      <div className="flex justify-center py-0.5">
+        <RaBadge
+          restAdvantage={game.restAdvantage}
+          homeAbbr={homeBrand.abbreviation}
+          awayAbbr={awayBrand.abbreviation}
+        />
+      </div>
+      <TeamRow
+        side="HOME"
+        abbreviation={game.homeTeam.abbreviation}
+        displayAbbreviation={homeBrand.abbreviation}
+        season={game.season}
+        teamFallback={{
+          name: game.homeTeam.name,
+          city: game.homeTeam.city,
+        }}
+        fatigue={game.homeFatigue}
+        score={game.homeFatigue?.score ?? null}
+        highlight={homeHighlight}
+      />
+
+      <div
+        className="mt-1 rounded-2xl border border-white/45 px-3 py-4 sm:px-4"
+        style={detailGlass}
+      >
+        <p className="mb-3 text-center font-heading text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+          Fatigue breakdown
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <FatigueDetailColumn
+            label={`Away · ${awayBrand.abbreviation}`}
+            fatigue={game.awayFatigue}
+          />
+          <FatigueDetailColumn
+            label={`Home · ${homeBrand.abbreviation}`}
+            fatigue={game.homeFatigue}
+          />
+        </div>
+      </div>
+
+      <div>
+        <p className="mb-2 text-center font-heading text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+          Recent games (7 days before this game)
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <RecentResultsList
+            label={`Away · ${awayBrand.abbreviation}`}
+            items={detail.awayRecentWeek}
+          />
+          <RecentResultsList
+            label={`Home · ${homeBrand.abbreviation}`}
+            items={detail.homeRecentWeek}
+          />
+        </div>
+      </div>
     </div>
   )
 }
@@ -120,21 +246,6 @@ export function ExploreGameDetailModal({
   if (!open || typeof document === "undefined") return null
 
   const game = detail?.game
-  const absDiff = Math.abs(game?.restAdvantage?.differential ?? 0)
-  const showHighlight = !!game?.restAdvantage && absDiff >= HIGHLIGHT_THRESHOLD
-  const advantageTeam = game?.restAdvantage?.advantageTeam
-
-  const awayHighlight: "advantage" | "disadvantage" | "neutral" = showHighlight
-    ? advantageTeam === "away"
-      ? "advantage"
-      : "disadvantage"
-    : "neutral"
-
-  const homeHighlight: "advantage" | "disadvantage" | "neutral" = showHighlight
-    ? advantageTeam === "home"
-      ? "advantage"
-      : "disadvantage"
-    : "neutral"
 
   return createPortal(
     <div
@@ -185,78 +296,7 @@ export function ExploreGameDetailModal({
           <p className="py-6 text-center text-sm text-[#C9082A]">{error}</p>
         )}
         {!loading && !error && game && detail && (
-          <div className="flex flex-col gap-3">
-            <GameStatusRow
-              status={game.status}
-              homeScore={game.homeScore}
-              awayScore={game.awayScore}
-            />
-            <p className="text-center font-heading text-lg font-bold text-slate-900">
-              {game.awayTeam.abbreviation}
-              <span className="mx-1.5 font-normal text-slate-300">@</span>
-              {game.homeTeam.abbreviation}
-            </p>
-            <p className="text-center text-[11px] text-slate-400">
-              {format(parseISO(game.date), "EEEE, MMMM d, yyyy")} · {game.season}
-            </p>
-
-            <TeamRow
-              side="AWAY"
-              abbreviation={game.awayTeam.abbreviation}
-              fatigue={game.awayFatigue}
-              score={game.awayFatigue?.score ?? null}
-              highlight={awayHighlight}
-            />
-            <div className="flex justify-center py-0.5">
-              <RaBadge
-                restAdvantage={game.restAdvantage}
-                homeAbbr={game.homeTeam.abbreviation}
-                awayAbbr={game.awayTeam.abbreviation}
-              />
-            </div>
-            <TeamRow
-              side="HOME"
-              abbreviation={game.homeTeam.abbreviation}
-              fatigue={game.homeFatigue}
-              score={game.homeFatigue?.score ?? null}
-              highlight={homeHighlight}
-            />
-
-            <div
-              className="mt-1 rounded-2xl border border-white/45 px-3 py-4 sm:px-4"
-              style={detailGlass}
-            >
-              <p className="mb-3 text-center font-heading text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Fatigue breakdown
-              </p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <FatigueDetailColumn
-                  label={`Away · ${game.awayTeam.abbreviation}`}
-                  fatigue={game.awayFatigue}
-                />
-                <FatigueDetailColumn
-                  label={`Home · ${game.homeTeam.abbreviation}`}
-                  fatigue={game.homeFatigue}
-                />
-              </div>
-            </div>
-
-            <div>
-              <p className="mb-2 text-center font-heading text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                Recent games (7 days before this game)
-              </p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <RecentResultsList
-                  label={`Away · ${game.awayTeam.abbreviation}`}
-                  items={detail.awayRecentWeek}
-                />
-                <RecentResultsList
-                  label={`Home · ${game.homeTeam.abbreviation}`}
-                  items={detail.homeRecentWeek}
-                />
-              </div>
-            </div>
-          </div>
+          <ExploreGameDetailBody game={game} detail={detail} />
         )}
       </div>
     </div>,
