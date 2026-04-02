@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls package.json next.config.* tsconfig.json)",
+      "Bash(pnpm run:*)",
+      "Bash(pnpm --version)",
+      "Bash(corepack --version)",
+      "Bash(corepack enable:*)",
+      "Bash(corepack use:*)",
+      "Bash(npx pnpm@9.15.9 --version)"
+    ]
+  }
+}
