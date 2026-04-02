@@ -7,7 +7,11 @@
       "Bash(corepack --version)",
       "Bash(corepack enable:*)",
       "Bash(corepack use:*)",
-      "Bash(npx pnpm@9.15.9 --version)"
+      "Bash(npx pnpm@9.15.9 --version)",
+      "Bash(pnpm list:*)",
+      "Bash(npm view:*)",
+      "Bash(pnpm drizzle-kit:*)",
+      "Bash(taskkill /F /FI \"WINDOWTITLE eq drizzle*\")"
     ]
   }
 }

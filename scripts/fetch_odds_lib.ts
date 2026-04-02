@@ -13,11 +13,12 @@ import { ODDS_API_TEAM_MAP } from "@/lib/odds-team-map";
 type AppDb = PostgresJsDatabase<typeof Schema>;
 
 const ODDS_API_URL =
-  "https://api.the-odds-api.com/v4/sports/basketball_nba/odds/?regions=us&markets=h2h&oddsFormat=american";
+  "https://api.the-odds-api.com/v4/sports/basketball_nba/odds/?regions=us&markets=h2h,spreads&oddsFormat=american";
 
 interface OddsOutcome {
   name: string;
   price: number;
+  point?: number; // present for spreads market
 }
 
 interface OddsMarket {
@@ -44,9 +45,23 @@ export type FetchAndStoreOddsResult = {
   requestsRemaining: string | null;
 };
 
-function commenceTimeToEtYmd(isoUtc: string): string {
-  const d = new Date(isoUtc);
-  return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+function commenceTimeToDateYmd(isoUtc: string): string {
+  // commence_time is UTC ISO 8601, extract YYYY-MM-DD directly
+  return isoUtc.slice(0, 10);
+}
+
+function extractSpread(event: OddsApiEvent): number | null {
+  for (const bm of event.bookmakers ?? []) {
+    for (const market of bm.markets ?? []) {
+      if (market.key !== "spreads") continue;
+      // Find the home team's spread point value
+      const homeOutcome = market.outcomes?.find((o) => o.name === event.home_team);
+      if (homeOutcome && typeof homeOutcome.point === "number") {
+        return homeOutcome.point; // e.g., -5.5 means home favored by 5.5
+      }
+    }
+  }
+  return null;
 }
 
 function extractH2hPrices(event: OddsApiEvent): { home: number; away: number } | null {
@@ -118,7 +133,7 @@ export async function fetchAndStoreOdds(db: AppDb): Promise<FetchAndStoreOddsRes
       continue;
     }
 
-    const dateYmd = commenceTimeToEtYmd(event.commence_time);
+    const dateYmd = commenceTimeToDateYmd(event.commence_time);
     const prices = extractH2hPrices(event);
     if (!prices) {
       skipped++;
@@ -134,8 +149,7 @@ export async function fetchAndStoreOdds(db: AppDb): Promise<FetchAndStoreOddsRes
         and(
           eq(games.date, dateYmd),
           eq(homeTeam.abbreviation, homeAbbr),
-          eq(awayTeam.abbreviation, awayAbbr),
-          eq(games.status, "scheduled")
+          eq(awayTeam.abbreviation, awayAbbr)
         )
       )
       .limit(1);
@@ -146,11 +160,14 @@ export async function fetchAndStoreOdds(db: AppDb): Promise<FetchAndStoreOddsRes
       continue;
     }
 
+    const spread = extractSpread(event);
+
     await db
       .update(games)
       .set({
         homeMoneyline: prices.home,
         awayMoneyline: prices.away,
+        ...(spread !== null ? { spread: String(spread) } : {}),
       })
       .where(eq(games.id, gameId));
     updated++;

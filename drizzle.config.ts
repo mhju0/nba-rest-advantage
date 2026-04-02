@@ -15,6 +15,11 @@ export default defineConfig({
   dbCredentials: {
     url: process.env.DATABASE_URL,
   },
+  // Only introspect our app tables in the public schema — skip Supabase internal
+  // schemas (auth, storage, etc.) whose CHECK constraints crash drizzle-kit@0.31.x.
+  schemaFilter: ["public"],
+  tablesFilter: ["teams", "games", "fatigue_scores", "predictions"],
+  extensionsFilters: ["postgis"],
   verbose: true,
   strict: true,
 });

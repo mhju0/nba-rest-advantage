@@ -60,7 +60,7 @@ export default function RootLayout({
 
         <footer className="border-t border-black/[0.06] py-6 backdrop-blur-sm">
           <div className="mx-auto flex max-w-7xl items-center justify-between px-4 sm:px-6">
-            <p className="text-xs text-slate-400">Built by Michael</p>
+            <p className="text-xs text-slate-400">Built by MJ</p>
             <a
               href="https://github.com/michaelju"
               target="_blank"

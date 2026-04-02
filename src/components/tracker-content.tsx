@@ -288,18 +288,27 @@ function PickCard({ pick }: { pick: UpcomingPickExtended }) {
         )}
       </div>
 
-      <p className="text-center text-[11px] text-slate-500">
-        Fatigue:{" "}
-        <span className="font-heading font-semibold tabular-nums text-slate-700">
-          {awayBrand.abbreviation}{" "}
-          {pick.awayFatigueScore !== null ? pick.awayFatigueScore.toFixed(1) : "—"}
-        </span>
-        <span className="mx-1.5 text-slate-300">·</span>
-        <span className="font-heading font-semibold tabular-nums text-slate-700">
-          {homeBrand.abbreviation}{" "}
-          {pick.homeFatigueScore !== null ? pick.homeFatigueScore.toFixed(1) : "—"}
-        </span>
-      </p>
+      <div className="flex flex-col items-center gap-1">
+        {pick.spread != null && (
+          <p className="text-[11px] font-medium tabular-nums text-slate-400">
+            Spread: {homeBrand.abbreviation}{" "}
+            {pick.spread > 0 ? "+" : ""}
+            {pick.spread}
+          </p>
+        )}
+        <p className="text-center text-[11px] text-slate-500">
+          Fatigue:{" "}
+          <span className="font-heading font-semibold tabular-nums text-slate-700">
+            {awayBrand.abbreviation}{" "}
+            {pick.awayFatigueScore !== null ? pick.awayFatigueScore.toFixed(1) : "—"}
+          </span>
+          <span className="mx-1.5 text-slate-300">·</span>
+          <span className="font-heading font-semibold tabular-nums text-slate-700">
+            {homeBrand.abbreviation}{" "}
+            {pick.homeFatigueScore !== null ? pick.homeFatigueScore.toFixed(1) : "—"}
+          </span>
+        </p>
+      </div>
     </div>
   )
 }
@@ -549,9 +558,14 @@ export function TrackerContent() {
           className="flex flex-col items-center gap-4 rounded-3xl border border-white/50 px-6 py-16 text-center"
           style={glass}
         >
-          <span className="text-5xl" role="img" aria-label="basketball">
-            🏀
-          </span>
+          <Image
+            src="https://cdn.nba.com/logos/leagues/logo-nba.svg"
+            alt="NBA"
+            width={64}
+            height={64}
+            unoptimized
+            className="size-16 object-contain"
+          />
           <h2 className="text-lg font-bold tracking-tight text-slate-800">
             No upcoming picks
           </h2>

@@ -60,6 +60,9 @@ export interface GameResponse {
   homeFatigue: FatigueInfo | null;
   awayFatigue: FatigueInfo | null;
   restAdvantage: RestAdvantage | null;
+  homeMoneyline: number | null;
+  awayMoneyline: number | null;
+  spread: number | null;
 }
 
 export interface ApiResponse<T> {
@@ -240,6 +243,7 @@ export interface UpcomingPickExtended {
   homeFatigueScore: number | null;
   awayFatigueScore: number | null;
   moneyline: { home: number; away: number } | null;
+  spread: number | null;
   season: string;
 }
 

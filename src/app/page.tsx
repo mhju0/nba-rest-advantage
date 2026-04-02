@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
+import Image from "next/image"
 import { addDays, format, parseISO } from "date-fns"
 import { Activity, ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -77,9 +78,14 @@ function SkeletonGrid() {
 function EmptyState({ label }: { label: string }) {
   return (
     <div className="flex flex-col items-center gap-4 rounded-3xl border border-white/50 bg-white/60 px-6 py-20 text-center shadow-[0_8px_32px_rgba(23,64,139,0.06)] backdrop-blur-2xl">
-      <span className="text-5xl" role="img" aria-label="basketball">
-        🏀
-      </span>
+      <Image
+        src="https://cdn.nba.com/logos/leagues/logo-nba.svg"
+        alt="NBA"
+        width={64}
+        height={64}
+        unoptimized
+        className="size-16 object-contain"
+      />
       <div className="flex flex-col gap-1">
         <p className="text-sm font-semibold text-slate-700">No games scheduled</p>
         <p className="text-xs text-slate-400">No NBA games on {label}</p>

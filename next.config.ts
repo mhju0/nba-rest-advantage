@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "cdn.nba.com",
-        pathname: "/logos/nba/**",
+        pathname: "/logos/**",
       },
       {
         protocol: "https",

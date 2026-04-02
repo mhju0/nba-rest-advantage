@@ -268,14 +268,10 @@ def main() -> None:
     if not database_url:
         sys.exit("ERROR: DATABASE_URL not set in scripts/.env")
 
-    # Default standalone run: April 2026 only (UTC). Override with NBA_CDN_FULL_SEASON=1.
-    full = os.environ.get("NBA_CDN_FULL_SEASON", "").lower() in ("1", "true", "yes")
-    month_filter: tuple[int, int] | None = None if full else (2026, 4)
+    # Always seed full season by default. The upsert is idempotent.
+    month_filter: tuple[int, int] | None = None
 
     print(f"Fetching NBA CDN schedule from:\n  {CDN_URL}\n")
-    if month_filter:
-        print(f"Filtering to UTC month {month_filter[0]:04d}-{month_filter[1]:02d} only "
-              f"(set NBA_CDN_FULL_SEASON=1 for entire regular season in payload).\n")
     data = fetch_cdn_schedule()
 
     conn = psycopg2.connect(database_url)

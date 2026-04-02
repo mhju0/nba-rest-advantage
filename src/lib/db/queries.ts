@@ -126,6 +126,9 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       status: games.status,
       homeScore: games.homeScore,
       awayScore: games.awayScore,
+      homeMoneyline: games.homeMoneyline,
+      awayMoneyline: games.awayMoneyline,
+      spread: games.spread,
       homeTeamId: games.homeTeamId,
       awayTeamId: games.awayTeamId,
       // Home team
@@ -200,6 +203,9 @@ type GameFatigueJoinRow = {
   status: string;
   homeScore: number | null;
   awayScore: number | null;
+  homeMoneyline: number | null;
+  awayMoneyline: number | null;
+  spread: string | null;
   homeTeamId: number;
   awayTeamId: number;
   homeTeamName: string;
@@ -301,6 +307,9 @@ function mapJoinedRowToGameResponse(
     homeFatigue: homeFatigueData,
     awayFatigue: awayFatigueData,
     restAdvantage,
+    homeMoneyline: row.homeMoneyline ?? null,
+    awayMoneyline: row.awayMoneyline ?? null,
+    spread: row.spread !== null ? parseFloat(String(row.spread)) : null,
   };
 }
 
@@ -322,6 +331,9 @@ export async function getGameById(id: number): Promise<GameResponse | null> {
       status: games.status,
       homeScore: games.homeScore,
       awayScore: games.awayScore,
+      homeMoneyline: games.homeMoneyline,
+      awayMoneyline: games.awayMoneyline,
+      spread: games.spread,
       homeTeamId: games.homeTeamId,
       awayTeamId: games.awayTeamId,
       homeTeamName: homeTeam.name,
@@ -755,6 +767,7 @@ export async function getPicksForSeason(
       awayFatigueScore: awayFatigue.score,
       homeMoneyline: games.homeMoneyline,
       awayMoneyline: games.awayMoneyline,
+      spread: games.spread,
     })
     .from(games)
     .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
@@ -831,6 +844,7 @@ export async function getPicksForSeason(
           ? awayFatigueScore
           : null,
       moneyline,
+      spread: r.spread !== null ? parseFloat(String(r.spread)) : null,
       season: String(r.season),
     };
   });
