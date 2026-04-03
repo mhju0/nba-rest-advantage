@@ -11,7 +11,9 @@
       "Bash(pnpm list:*)",
       "Bash(npm view:*)",
       "Bash(pnpm drizzle-kit:*)",
-      "Bash(taskkill /F /FI \"WINDOWTITLE eq drizzle*\")"
+      "Bash(taskkill /F /FI \"WINDOWTITLE eq drizzle*\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''scripts/import_kaggle_spreads.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''/Users/michaelju/Workspace/Projects/nba-rest-advantage/scripts/import_kaggle_spreads.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")"
     ]
   }
 }
