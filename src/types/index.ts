@@ -60,9 +60,6 @@ export interface GameResponse {
   homeFatigue: FatigueInfo | null;
   awayFatigue: FatigueInfo | null;
   restAdvantage: RestAdvantage | null;
-  homeMoneyline: number | null;
-  awayMoneyline: number | null;
-  spread: number | null;
 }
 
 export interface ApiResponse<T> {
@@ -137,11 +134,6 @@ export interface ThresholdBucket {
   restedTeamWins: number;
   /** Win percentage (0–100, 1 decimal). */
   winPct: number;
-  /**
-   * Percentage of games where the more-rested team also covered the spread.
-   * null when no games in this bucket have spread data.
-   */
-  spreadCoverRate: number | null;
 }
 
 export interface HomeAwayBreakdown {
@@ -185,7 +177,6 @@ export interface AnalysisResponse {
     restedTeamWins: number;
     winPct: number;
   }[];
-  atsOverall: { covered: number; total: number; coverRate: number } | null;
 }
 
 // ─── Game search ─────────────────────────────────────────────────
@@ -206,8 +197,10 @@ export interface GameSearchResult {
   restedTeamWon: boolean;
 }
 
-/** One prior final game in the week before a focal game (for detail modals). */
+/** One prior final game shown in the detail modal's Recent Games list. */
 export interface TeamRecentResultGame {
+  /** Primary key of this game (for drill-down navigation). */
+  gameId: number;
   date: string;
   opponentAbbreviation: string;
   isHome: boolean;
@@ -228,5 +221,19 @@ export interface GameSearchResponse {
   total: number;
   page: number;
   limit: number;
+}
+
+// ─── Upcoming games (Future Games page) ──────────────────────────
+
+export interface UpcomingGameWithRA {
+  gameId: number;
+  date: string;
+  season: string;
+  homeTeam: Pick<TeamInfo, "id" | "abbreviation" | "name" | "city">;
+  awayTeam: Pick<TeamInfo, "id" | "abbreviation" | "name" | "city">;
+  homeFatigueScore: number | null;
+  awayFatigueScore: number | null;
+  restAdvantageDifferential: number;
+  predictedAdvantageAbbreviation: string;
 }
 

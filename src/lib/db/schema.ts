@@ -42,12 +42,8 @@ export const games = pgTable(
      * Pipeline classification (regular vs postseason). App queries filter to "regular" for analysis.
      */
     gameType: varchar("game_type", { length: 16 }).notNull().default("regular"),
-    spread: decimal("spread"),
     /** Overtime periods beyond regulation (1 = one OT, 2 = double OT, …). */
     overtimePeriods: integer("overtime_periods").notNull().default(0),
-    /** American odds (nullable until odds feed is wired). */
-    homeMoneyline: integer("home_moneyline"),
-    awayMoneyline: integer("away_moneyline"),
   },
   (t) => [
     index("games_date_idx").on(t.date),
@@ -113,7 +109,6 @@ export const predictions = pgTable(
       .references(() => teams.id),
     restAdvantageDifferential: decimal("rest_advantage_differential").notNull(),
     actualWinnerId: integer("actual_winner_id").references(() => teams.id),
-    spreadCovered: boolean("spread_covered"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => [index("predictions_game_id_idx").on(t.gameId)]

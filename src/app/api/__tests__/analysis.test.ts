@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 import { GET } from "../analysis/route";
 import { getCompletedGamesWithFatigue } from "@/lib/db/queries";
 import type { AnalysisResponse } from "@/types";
@@ -9,17 +10,13 @@ vi.mock("@/lib/db/queries", () => ({
 
 const mockGetCompleted = vi.mocked(getCompletedGamesWithFatigue);
 
-/**
- * Build final games with fatigue strings. `away - home` = rest-advantage differential
- * (positive → home team more rested in this codebase).
- */
+/** Build final games with fatigue strings. `away - home` = rest-advantage differential. */
 function row(
   date: string,
   homeFatigue: number,
   awayFatigue: number,
   homeScore: number,
-  awayScore: number,
-  spread: string | null = "-1.5"
+  awayScore: number
 ) {
   return {
     date,
@@ -28,8 +25,11 @@ function row(
     awayFatigueScore: String(awayFatigue),
     homeScore,
     awayScore,
-    spread,
   };
+}
+
+function makeReq(search = "") {
+  return new NextRequest(`http://localhost/api/analysis${search}`);
 }
 
 describe("GET /api/analysis", () => {
@@ -51,7 +51,7 @@ describe("GET /api/analysis", () => {
       row("2024-01-11", 8, 2, 99, 102),
     ]);
 
-    const res = await GET();
+    const res = await GET(makeReq());
     expect(res.status).toBe(200);
 
     const body = (await res.json()) as {
@@ -87,7 +87,7 @@ describe("GET /api/analysis", () => {
       row("2024-02-03", 3, 9, 108, 102),
     ]);
 
-    const res = await GET();
+    const res = await GET(makeReq());
     const body = (await res.json()) as { data: AnalysisResponse; error: string | null };
     expect(body.error).toBeNull();
     const d = body.data;
@@ -95,7 +95,6 @@ describe("GET /api/analysis", () => {
     const pcts: number[] = [d.overallWinRate];
     for (const t of d.thresholds) {
       pcts.push(t.winPct);
-      if (t.spreadCoverRate !== null) pcts.push(t.spreadCoverRate);
     }
     pcts.push(d.homeAwayBreakdown.homeTeamMoreRested.winPct);
     pcts.push(d.homeAwayBreakdown.awayTeamMoreRested.winPct);
@@ -119,7 +118,7 @@ describe("GET /api/analysis", () => {
       row("2024-03-08", 5, 13, 121, 115),
     ]);
 
-    const res = await GET();
+    const res = await GET(makeReq());
     const body = (await res.json()) as { data: AnalysisResponse; error: string | null };
     expect(body.error).toBeNull();
 

@@ -15,6 +15,7 @@ import type {
   GameResponse,
   RestAdvantage,
   TeamRecentResultGame,
+  UpcomingGameWithRA,
 } from "@/types";
 
 const NEUTRAL_THRESHOLD = 0.5;
@@ -124,9 +125,6 @@ export async function getGamesByDate(date: string): Promise<GameResponse[]> {
       status: games.status,
       homeScore: games.homeScore,
       awayScore: games.awayScore,
-      homeMoneyline: games.homeMoneyline,
-      awayMoneyline: games.awayMoneyline,
-      spread: games.spread,
       homeTeamId: games.homeTeamId,
       awayTeamId: games.awayTeamId,
       // Home team
@@ -201,9 +199,6 @@ type GameFatigueJoinRow = {
   status: string;
   homeScore: number | null;
   awayScore: number | null;
-  homeMoneyline: number | null;
-  awayMoneyline: number | null;
-  spread: string | null;
   homeTeamId: number;
   awayTeamId: number;
   homeTeamName: string;
@@ -305,9 +300,6 @@ function mapJoinedRowToGameResponse(
     homeFatigue: homeFatigueData,
     awayFatigue: awayFatigueData,
     restAdvantage,
-    homeMoneyline: row.homeMoneyline ?? null,
-    awayMoneyline: row.awayMoneyline ?? null,
-    spread: row.spread !== null ? parseFloat(String(row.spread)) : null,
   };
 }
 
@@ -329,9 +321,6 @@ export async function getGameById(id: number): Promise<GameResponse | null> {
       status: games.status,
       homeScore: games.homeScore,
       awayScore: games.awayScore,
-      homeMoneyline: games.homeMoneyline,
-      awayMoneyline: games.awayMoneyline,
-      spread: games.spread,
       homeTeamId: games.homeTeamId,
       awayTeamId: games.awayTeamId,
       homeTeamName: homeTeam.name,
@@ -395,22 +384,19 @@ export async function getGameById(id: number): Promise<GameResponse | null> {
   return mapJoinedRowToGameResponse(row, is4In6Map, games30Map);
 }
 
-const RECENT_RESULTS_LOOKBACK_DAYS = 7;
-
 /**
- * Final games for `teamId` in the 7 calendar days before `beforeDateYmd` (exclusive).
+ * Last 5 final games for `teamId` before `beforeDateYmd` (exclusive), most recent first.
  */
 export async function getTeamRecentFinalResults(
   teamId: number,
   beforeDateYmd: string
 ): Promise<TeamRecentResultGame[]> {
-  const tip = parseISO(beforeDateYmd);
-  const windowStart = format(subDays(tip, RECENT_RESULTS_LOOKBACK_DAYS), "yyyy-MM-dd");
   const homeT = alias(teams, "rh");
   const awayT = alias(teams, "ra");
 
   const rows = await db
     .select({
+      gameId: games.id,
       date: games.date,
       homeTeamId: games.homeTeamId,
       awayTeamId: games.awayTeamId,
@@ -428,12 +414,12 @@ export async function getTeamRecentFinalResults(
         eq(games.status, "final"),
         isNotNull(games.homeScore),
         isNotNull(games.awayScore),
-        gte(games.date, windowStart),
         lt(games.date, beforeDateYmd),
         or(eq(games.homeTeamId, teamId), eq(games.awayTeamId, teamId))
       )
     )
-    .orderBy(desc(games.date));
+    .orderBy(desc(games.date))
+    .limit(5);
 
   return rows.map((r) => {
     const isHome = r.homeTeamId === teamId;
@@ -444,6 +430,7 @@ export async function getTeamRecentFinalResults(
     const opponentAbbreviation = isHome ? r.awayAbbr : r.homeAbbr;
     const won = teamScore > opponentScore;
     return {
+      gameId: r.gameId,
       date: String(r.date),
       opponentAbbreviation,
       isHome,
@@ -513,7 +500,6 @@ type CompletedGameRow = {
   season: string;
   homeScore: number | null;
   awayScore: number | null;
-  spread: string | null;
   homeFatigueScore: string;
   awayFatigueScore: string;
 };
@@ -532,7 +518,6 @@ export async function getCompletedGamesWithFatigue(): Promise<CompletedGameRow[]
       season: games.season,
       homeScore: games.homeScore,
       awayScore: games.awayScore,
-      spread: games.spread,
       homeFatigueScore: homeFatigue.score,
       awayFatigueScore: awayFatigue.score,
     })
@@ -875,4 +860,105 @@ function buildRestAdvantage(
   }
 
   return { differential, advantageTeam };
+}
+
+// ─── Upcoming games with rest advantage ─────────────────────────
+
+/**
+ * Scheduled regular-season games for the given season with open predictions,
+ * optionally filtered to |RA differential| >= minRA. Returns upcoming games only
+ * (on or after today's date), sorted by date ascending.
+ */
+export async function getUpcomingGamesWithRA(
+  season: string,
+  minRA: number
+): Promise<UpcomingGameWithRA[]> {
+  const homeTeam = alias(teams, "ht");
+  const awayTeam = alias(teams, "at");
+  const predictedTeam = alias(teams, "pt");
+  const homeFatigue = latestFatigueSubquery("home_fatigue_upcoming_h");
+  const awayFatigue = latestFatigueSubquery("home_fatigue_upcoming_a");
+
+  const latestOpen = db
+    .selectDistinctOn([predictions.gameId], {
+      gameId: predictions.gameId,
+      predictedAdvantageTeamId: predictions.predictedAdvantageTeamId,
+      differential: predictions.restAdvantageDifferential,
+    })
+    .from(predictions)
+    .where(isNull(predictions.actualWinnerId))
+    .orderBy(predictions.gameId, desc(predictions.createdAt))
+    .as("latest_open_pred_upcoming");
+
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+
+  const conditions = [
+    eq(games.season, season),
+    eq(games.gameType, "regular"),
+    eq(games.status, "scheduled"),
+    gte(games.date, todayStr),
+    gameDateWithinRegularSeasonCalendar,
+  ];
+
+  if (minRA > 0) {
+    conditions.push(
+      sql`abs(cast(${latestOpen.differential} as numeric)) >= ${minRA}`
+    );
+  }
+
+  const rows = await db
+    .select({
+      gameId: games.id,
+      date: games.date,
+      season: games.season,
+      homeTeamId: homeTeam.id,
+      homeTeamAbbreviation: homeTeam.abbreviation,
+      homeTeamName: homeTeam.name,
+      homeTeamCity: homeTeam.city,
+      awayTeamId: awayTeam.id,
+      awayTeamAbbreviation: awayTeam.abbreviation,
+      awayTeamName: awayTeam.name,
+      awayTeamCity: awayTeam.city,
+      predictedTeamAbbreviation: predictedTeam.abbreviation,
+      differential: latestOpen.differential,
+      homeFatigueScore: homeFatigue.score,
+      awayFatigueScore: awayFatigue.score,
+    })
+    .from(latestOpen)
+    .innerJoin(games, eq(games.id, latestOpen.gameId))
+    .innerJoin(homeTeam, eq(games.homeTeamId, homeTeam.id))
+    .innerJoin(awayTeam, eq(games.awayTeamId, awayTeam.id))
+    .innerJoin(predictedTeam, eq(latestOpen.predictedAdvantageTeamId, predictedTeam.id))
+    .leftJoin(
+      homeFatigue,
+      and(eq(homeFatigue.gameId, games.id), eq(homeFatigue.teamId, games.homeTeamId))
+    )
+    .leftJoin(
+      awayFatigue,
+      and(eq(awayFatigue.gameId, games.id), eq(awayFatigue.teamId, games.awayTeamId))
+    )
+    .where(and(...conditions))
+    .orderBy(asc(games.date), asc(games.id));
+
+  return rows.map((r) => ({
+    gameId: r.gameId,
+    date: String(r.date),
+    season: r.season,
+    homeTeam: {
+      id: r.homeTeamId,
+      abbreviation: r.homeTeamAbbreviation,
+      name: r.homeTeamName,
+      city: r.homeTeamCity,
+    },
+    awayTeam: {
+      id: r.awayTeamId,
+      abbreviation: r.awayTeamAbbreviation,
+      name: r.awayTeamName,
+      city: r.awayTeamCity,
+    },
+    homeFatigueScore: r.homeFatigueScore !== null ? parseFloat(String(r.homeFatigueScore)) : null,
+    awayFatigueScore: r.awayFatigueScore !== null ? parseFloat(String(r.awayFatigueScore)) : null,
+    restAdvantageDifferential: parseFloat(String(r.differential)),
+    predictedAdvantageAbbreviation: r.predictedTeamAbbreviation,
+  }));
 }

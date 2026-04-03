@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useState } from "react"
 import { createPortal } from "react-dom"
 import { format, parseISO } from "date-fns"
-import { X } from "lucide-react"
+import { ChevronLeft, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   FatigueDetailColumn,
@@ -31,9 +31,11 @@ const detailGlass = {
 function RecentResultsList({
   label,
   items,
+  onGameClick,
 }: {
   label: string
   items: TeamRecentResultGame[]
+  onGameClick: (gameId: number) => void
 }) {
   return (
     <div className="rounded-xl border border-white/50 px-3 py-3">
@@ -41,13 +43,23 @@ function RecentResultsList({
         {label}
       </p>
       {items.length === 0 ? (
-        <p className="mt-2 text-center text-[11px] text-slate-400">No games in prior 7 days</p>
+        <p className="mt-2 text-center text-[11px] text-slate-400">No recent games</p>
       ) : (
         <ul className="mt-2 flex flex-col gap-1.5">
           {items.map((g) => (
             <li
-              key={g.date + g.opponentAbbreviation}
-              className="flex flex-wrap items-center justify-between gap-x-2 text-[11px] text-slate-700"
+              key={g.gameId}
+              role="button"
+              tabIndex={0}
+              onClick={() => onGameClick(g.gameId)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  onGameClick(g.gameId)
+                }
+              }}
+              className="flex cursor-pointer flex-wrap items-center justify-between gap-x-2 rounded-lg px-1.5 py-1 text-[11px] text-slate-700 transition-colors hover:bg-[#17408B]/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17408B]/30"
+              aria-label={`View game details: ${format(parseISO(g.date), "MMM d")} vs ${g.opponentAbbreviation}`}
             >
               <span className="text-slate-500">
                 {format(parseISO(g.date), "MMM d")}
@@ -71,9 +83,11 @@ function RecentResultsList({
 function ExploreGameDetailBody({
   game,
   detail,
+  onGameClick,
 }: {
   game: GameResponse
   detail: GameDetailResponse
+  onGameClick: (gameId: number) => void
 }) {
   const homeBrand = getTeamBranding(game.homeTeam.abbreviation, game.season, {
     name: game.homeTeam.name,
@@ -171,16 +185,18 @@ function ExploreGameDetailBody({
 
       <div>
         <p className="mb-2 text-center font-heading text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-          Recent games (7 days before this game)
+          Recent Games
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <RecentResultsList
             label={`Away · ${awayBrand.abbreviation}`}
             items={detail.awayRecentWeek}
+            onGameClick={onGameClick}
           />
           <RecentResultsList
             label={`Home · ${homeBrand.abbreviation}`}
             items={detail.homeRecentWeek}
+            onGameClick={onGameClick}
           />
         </div>
       </div>
@@ -202,8 +218,28 @@ export function ExploreGameDetailModal({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Navigation stack: history of game IDs to go back to
+  const [navHistory, setNavHistory] = useState<number[]>([])
+  // Currently displayed game ID (may differ from the `gameId` prop when drilling down)
+  const [activeGameId, setActiveGameId] = useState<number | null>(gameId)
+
+  // Reset state whenever the modal opens or the root gameId changes
   useEffect(() => {
-    if (!open || gameId === null) {
+    if (!open) {
+      setNavHistory([])
+      setActiveGameId(gameId)
+      setDetail(null)
+      setError(null)
+      return
+    }
+    // Modal just opened with a (potentially new) gameId
+    setNavHistory([])
+    setActiveGameId(gameId)
+  }, [open, gameId])
+
+  // Fetch game detail whenever activeGameId changes (and modal is open)
+  useEffect(() => {
+    if (!open || activeGameId === null) {
       setDetail(null)
       setError(null)
       return
@@ -213,7 +249,7 @@ export function ExploreGameDetailModal({
     setLoading(true)
     setError(null)
 
-    void fetch(`/api/game/${gameId}`, { signal: ac.signal })
+    void fetch(`/api/game/${activeGameId}`, { signal: ac.signal })
       .then(async (res) => {
         const json = (await res.json()) as ApiResponse<GameDetailResponse | null>
         if (!res.ok) throw new Error(json.error ?? res.statusText)
@@ -228,7 +264,23 @@ export function ExploreGameDetailModal({
       .finally(() => setLoading(false))
 
     return () => ac.abort()
-  }, [open, gameId])
+  }, [open, activeGameId])
+
+  const navigateTo = useCallback(
+    (id: number) => {
+      if (activeGameId !== null) {
+        setNavHistory((prev) => [...prev, activeGameId])
+      }
+      setActiveGameId(id)
+    },
+    [activeGameId]
+  )
+
+  const goBack = useCallback(() => {
+    if (navHistory.length === 0) return
+    setActiveGameId(navHistory[navHistory.length - 1])
+    setNavHistory((prev) => prev.slice(0, -1))
+  }, [navHistory])
 
   const onBackdrop = useCallback(() => {
     onOpenChange(false)
@@ -246,6 +298,7 @@ export function ExploreGameDetailModal({
   if (!open || typeof document === "undefined") return null
 
   const game = detail?.game
+  const canGoBack = navHistory.length > 0
 
   return createPortal(
     <div
@@ -273,10 +326,25 @@ export function ExploreGameDetailModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-start justify-between gap-2">
-          <h2 id={titleId} className="font-heading text-sm font-bold text-slate-800">
-            Game details
-          </h2>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
+            {canGoBack && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 rounded-full px-2 text-xs text-slate-500 hover:text-slate-800"
+                onClick={goBack}
+                aria-label="Back to previous game"
+              >
+                <ChevronLeft className="size-3" />
+                Back
+              </Button>
+            )}
+            <h2 id={titleId} className="font-heading text-sm font-bold text-slate-800">
+              {canGoBack ? "" : "Game details"}
+            </h2>
+          </div>
           <Button
             type="button"
             variant="ghost"
@@ -296,7 +364,11 @@ export function ExploreGameDetailModal({
           <p className="py-6 text-center text-sm text-[#C9082A]">{error}</p>
         )}
         {!loading && !error && game && detail && (
-          <ExploreGameDetailBody game={game} detail={detail} />
+          <ExploreGameDetailBody
+            game={game}
+            detail={detail}
+            onGameClick={navigateTo}
+          />
         )}
       </div>
     </div>,

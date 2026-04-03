@@ -21,10 +21,6 @@ import type { FatigueInfo, GameResponse } from "@/types"
 /** Minimum |differential| to show advantage/disadvantage highlight. */
 const HIGHLIGHT_THRESHOLD = 1.0
 
-function formatOdds(n: number): string {
-  return n > 0 ? `+${n}` : `${n}`
-}
-
 const detailGlass = {
   background: "rgba(255, 255, 255, 0.42)",
   backdropFilter: "blur(14px)",
@@ -220,6 +216,26 @@ function ScheduleStressBadge({
   )
 }
 
+/** Subtle pill tag for contextual flags (altitude, OT, coast swing). */
+function FatigueTag({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-1.5 py-px font-heading text-[10px] font-semibold leading-3",
+        className
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
 function RoadTripBadge({ nights }: { nights: number }) {
   if (nights < 2) return null
   return (
@@ -309,7 +325,7 @@ export function FatigueDetailColumn({
       </p>
 
       <div className="flex justify-between gap-2 text-xs">
-        <span className="text-slate-500">Games (30d / 7d)</span>
+        <span className="text-slate-500">GP (30d / 7d)</span>
         <span className="font-heading font-semibold tabular-nums text-slate-800">
           {fatigue.gamesInLast30Days} / {fatigue.gamesInLast7Days}
         </span>
@@ -343,11 +359,6 @@ export function FatigueDetailColumn({
       </div>
 
       <div className="flex justify-between gap-2 text-xs">
-        <span className="text-slate-500">Coast swing</span>
-        <PenaltyMark active={fatigue.hasCoastToCoastRoadSwing} />
-      </div>
-
-      <div className="flex justify-between gap-2 text-xs">
         <span
           className="text-slate-500"
           title={`Cumulative great-circle miles over the prior ${TRAVEL_LOOKBACK_DAYS} days (scheduled legs)`}
@@ -362,23 +373,6 @@ export function FatigueDetailColumn({
         >
           {Math.round(fatigue.travelDistanceMiles).toLocaleString()} mi
         </span>
-      </div>
-
-      <div className="flex justify-between gap-2 text-xs">
-        <span className="text-slate-500">Altitude</span>
-        <div className="text-right">
-          <PenaltyMark active={fatigue.altitudePenalty} />
-          {fatigue.altitudeArenaLabel ? (
-            <p className="mt-0.5 max-w-[9rem] text-[10px] leading-tight text-slate-400">
-              {fatigue.altitudeArenaLabel}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex justify-between gap-2 text-xs">
-        <span className="text-slate-500">Prior game OT</span>
-        <PenaltyMark active={fatigue.isOvertimePenalty} />
       </div>
 
       <div className="flex justify-between gap-2 text-xs">
@@ -400,7 +394,6 @@ export function TeamRow({
   fatigue,
   score,
   highlight,
-  moneyline,
 }: {
   side: "AWAY" | "HOME"
   abbreviation: string
@@ -410,7 +403,6 @@ export function TeamRow({
   fatigue: FatigueInfo | null
   score: number | null
   highlight: "advantage" | "disadvantage" | "neutral"
-  moneyline?: number | null
 }) {
   return (
     <div
@@ -435,11 +427,6 @@ export function TeamRow({
           <span className="font-heading text-sm font-bold text-slate-800">
             {displayAbbreviation}
           </span>
-          {moneyline != null && (
-            <span className="text-xs font-medium tabular-nums text-slate-400">
-              {formatOdds(moneyline)}
-            </span>
-          )}
           {fatigue?.isBackToBack && <B2BBadge />}
           {fatigue?.is3In4 && <ScheduleStressBadge label="3in4" />}
           {fatigue?.is4In6 && <ScheduleStressBadge label="4in6" />}
@@ -447,7 +434,19 @@ export function TeamRow({
             <RoadTripBadge nights={fatigue.roadTripConsecutiveAway} />
           )}
           {fatigue?.hasCoastToCoastRoadSwing && (
-            <ScheduleStressBadge label="Coast" className="bg-violet-600/95" />
+            <FatigueTag className="border-violet-200 bg-violet-50 text-violet-700">
+              ✈ Coast
+            </FatigueTag>
+          )}
+          {fatigue?.altitudePenalty && (
+            <FatigueTag className="border-amber-300 bg-amber-50 text-amber-700">
+              ⛰ Alt
+            </FatigueTag>
+          )}
+          {fatigue?.isOvertimePenalty && (
+            <FatigueTag className="border-purple-200 bg-purple-50 text-purple-700">
+              OT
+            </FatigueTag>
           )}
         </div>
         <span className="ml-auto shrink-0 font-heading text-base font-semibold tabular-nums text-slate-700">
@@ -580,7 +579,6 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
             fatigue={game.awayFatigue}
             score={game.awayFatigue?.score ?? null}
             highlight={awayHighlight}
-            moneyline={game.awayMoneyline}
           />
 
           <div className="flex items-center justify-center gap-2 py-0.5">
@@ -589,11 +587,6 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
               homeAbbr={homeBrand.abbreviation}
               awayAbbr={awayBrand.abbreviation}
             />
-            {game.spread != null && (
-              <span className="inline-flex items-center rounded-full border border-[#17408B]/20 bg-[#17408B]/[0.06] px-2.5 py-0.5 text-xs font-medium tabular-nums text-[#17408B]/70">
-                {homeBrand.abbreviation} {game.spread > 0 ? "+" : ""}{game.spread}
-              </span>
-            )}
           </div>
 
           <TeamRow
@@ -608,7 +601,6 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
             fatigue={game.homeFatigue}
             score={game.homeFatigue?.score ?? null}
             highlight={homeHighlight}
-            moneyline={game.homeMoneyline}
           />
         </CardContent>
       </Card>

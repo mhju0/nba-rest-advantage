@@ -182,7 +182,6 @@ async function main(): Promise<void> {
           Math.round(differential * 100) / 100
         ),
         actualWinnerId: null,
-        spreadCovered: null,
       });
       predictionRows++;
     }
@@ -192,16 +191,6 @@ async function main(): Promise<void> {
     `[run-daily] ${dateArg}–${endDate}: fatigue rows written=${fatigueRows}, predictions written=${predictionRows}`
   );
 
-  if (process.env.THE_ODDS_API_KEY?.trim()) {
-    console.log("[run-daily] fetching odds...");
-    try {
-      const { fetchAndStoreOdds } = await import("./fetch_odds_lib");
-      const oddsResult = await fetchAndStoreOdds(appDb);
-      console.log(`[run-daily] odds: updated ${oddsResult.updated} games`);
-    } catch (err) {
-      console.warn("[run-daily] odds fetch failed (non-fatal):", err);
-    }
-  }
 }
 
 main().catch((err) => {

@@ -116,7 +116,6 @@ async function main(): Promise<void> {
         predictedAdvantageTeamId: predictedTeamId,
         restAdvantageDifferential: String(Math.round(differential * 100) / 100),
         actualWinnerId,
-        spreadCovered: null,
         createdAt: new Date(game.date),
       });
 

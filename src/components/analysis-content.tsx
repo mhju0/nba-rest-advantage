@@ -11,7 +11,6 @@ import {
   ResponsiveContainer,
   ReferenceLine,
   LabelList,
-  Legend,
 } from "recharts"
 import type { TooltipContentProps } from "recharts"
 import { format } from "date-fns"
@@ -42,7 +41,6 @@ type WinRateDatum = {
   label: string
   winPct: number
   games: number
-  spreadCoverRate?: number | null
   threshold?: number
 }
 
@@ -59,7 +57,7 @@ function WinRateTooltip({ active, payload }: TooltipContentProps) {
       <p className="font-semibold text-slate-800">{d.label}</p>
       {payload.map((p) => (
         <p key={p.dataKey as string} className="mt-0.5" style={{ color: p.color }}>
-          {p.dataKey === "spreadCoverRate" ? "ATS cover rate" : "Win rate"}:{" "}
+          Win rate:{" "}
           <span className="font-bold">{typeof p.value === "number" ? p.value : "--"}%</span>
         </p>
       ))}
@@ -97,8 +95,24 @@ function SeasonWinRateTooltip({ active, payload }: TooltipContentProps) {
   )
 }
 
-function SeasonWinRateBySeasonChart({ data }: { data: AnalysisResponse }) {
-  const chartData: SeasonWinRateDatum[] = data.seasonWinRates.map((s) => ({
+// ─── RA threshold toggle options ──────────────────────────────────
+
+const RA_THRESHOLD_OPTIONS = [
+  { label: "All Games", value: 0 },
+  { label: "RA ≥ 2", value: 2 },
+  { label: "RA ≥ 3", value: 3 },
+  { label: "RA ≥ 5", value: 5 },
+  { label: "RA ≥ 7", value: 7 },
+]
+
+function SeasonWinRateBySeasonChart({
+  seasonWinRates,
+  loading,
+}: {
+  seasonWinRates: AnalysisResponse["seasonWinRates"]
+  loading: boolean
+}) {
+  const chartData: SeasonWinRateDatum[] = seasonWinRates.map((s) => ({
     label: s.season,
     winPct: s.winPct,
     games: s.games,
@@ -106,86 +120,80 @@ function SeasonWinRateBySeasonChart({ data }: { data: AnalysisResponse }) {
   }))
 
   return (
-    <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-      <p className="text-sm font-semibold text-slate-800">Win rate by season</p>
-      <p className="mt-0.5 text-xs text-slate-400">
-        Each bar is the full regular-season sample (Oct–Apr dates) where |rest advantage| was at least
-        0.5 — useful as you add more seasons to see whether the edge is stable year to year.
-      </p>
-
-      <div className="mt-6 h-72 min-w-0">
-        {chartData.length === 0 ? (
-          <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200">
-            <p className="text-xs text-slate-400">No season-level data yet</p>
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
-              <defs>
-                <linearGradient id="seasonWinGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#17408B" stopOpacity={1} />
-                  <stop offset="100%" stopColor="#17408B" stopOpacity={0.65} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid
-                vertical={false}
-                strokeDasharray="3 3"
-                stroke="rgba(0,0,0,0.06)"
+    <div className="mt-6 h-72 min-w-0">
+      {loading ? (
+        <Skeleton className="h-full w-full rounded-xl bg-slate-200/80" />
+      ) : chartData.length === 0 ? (
+        <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200">
+          <p className="text-xs text-slate-400">No season-level data yet</p>
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={chartData} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
+            <defs>
+              <linearGradient id="seasonWinGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#17408B" stopOpacity={1} />
+                <stop offset="100%" stopColor="#17408B" stopOpacity={0.65} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid
+              vertical={false}
+              strokeDasharray="3 3"
+              stroke="rgba(0,0,0,0.06)"
+            />
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 10, fill: "#64748b" }}
+              tickLine={false}
+              axisLine={false}
+              interval={0}
+              angle={-32}
+              textAnchor="end"
+              height={52}
+            />
+            <YAxis
+              domain={[40, 70]}
+              tickFormatter={(v: number) => `${v}%`}
+              tick={{ fontSize: 11, fill: "#94a3b8" }}
+              tickLine={false}
+              axisLine={false}
+              width={40}
+            />
+            <Tooltip
+              cursor={{ fill: "rgba(23,64,139,0.06)" }}
+              content={(props: TooltipContentProps) => <SeasonWinRateTooltip {...props} />}
+            />
+            <ReferenceLine
+              y={50}
+              stroke="#C9082A"
+              strokeDasharray="4 4"
+              strokeOpacity={0.45}
+              label={{
+                value: "Coin Flip",
+                position: "insideTopRight",
+                fontSize: 10,
+                fill: "#C9082A",
+                opacity: 0.7,
+              }}
+            />
+            <Bar
+              dataKey="winPct"
+              fill="url(#seasonWinGrad)"
+              radius={[6, 6, 0, 0]}
+              maxBarSize={48}
+            >
+              <LabelList
+                dataKey="games"
+                position="top"
+                formatter={(v: string | number | boolean | null | undefined) =>
+                  typeof v === "number" ? `n=${v.toLocaleString()}` : ""
+                }
+                style={{ fontSize: "10px", fill: "#94a3b8" }}
               />
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 10, fill: "#64748b" }}
-                tickLine={false}
-                axisLine={false}
-                interval={0}
-                angle={-32}
-                textAnchor="end"
-                height={52}
-              />
-              <YAxis
-                domain={[40, 70]}
-                tickFormatter={(v: number) => `${v}%`}
-                tick={{ fontSize: 11, fill: "#94a3b8" }}
-                tickLine={false}
-                axisLine={false}
-                width={40}
-              />
-              <Tooltip
-                cursor={{ fill: "rgba(23,64,139,0.06)" }}
-                content={(props: TooltipContentProps) => <SeasonWinRateTooltip {...props} />}
-              />
-              <ReferenceLine
-                y={50}
-                stroke="#C9082A"
-                strokeDasharray="4 4"
-                strokeOpacity={0.45}
-                label={{
-                  value: "Coin Flip",
-                  position: "insideTopRight",
-                  fontSize: 10,
-                  fill: "#C9082A",
-                  opacity: 0.7,
-                }}
-              />
-              <Bar
-                dataKey="winPct"
-                fill="url(#seasonWinGrad)"
-                radius={[6, 6, 0, 0]}
-                maxBarSize={48}
-              >
-                <LabelList
-                  dataKey="games"
-                  position="top"
-                  formatter={(v: string | number | boolean | null | undefined) =>
-                    typeof v === "number" ? `n=${v.toLocaleString()}` : ""
-                  }
-                  style={{ fontSize: "10px", fill: "#94a3b8" }}
-                />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
     </div>
   )
 }
@@ -210,15 +218,11 @@ function AnalysisSkeleton() {
         <Skeleton className="h-64 w-full rounded-xl bg-slate-200/80" />
       </div>
       {/* Breakdown */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {[0, 1].map((i) => (
-          <div key={i} className="rounded-3xl border border-white/50 p-6" style={glass}>
-            <Skeleton className="mb-3 h-3 w-40 rounded-lg bg-slate-200/80" />
-            <Skeleton className="h-12 w-24 rounded-xl bg-slate-200/80" />
-            <Skeleton className="mt-2 h-3 w-44 rounded-lg bg-slate-200/80" />
-            <Skeleton className="mt-4 h-1.5 w-full rounded-full bg-slate-200/80" />
-          </div>
-        ))}
+      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
+        <Skeleton className="mb-3 h-3 w-40 rounded-lg bg-slate-200/80" />
+        <Skeleton className="h-12 w-24 rounded-xl bg-slate-200/80" />
+        <Skeleton className="mt-2 h-3 w-44 rounded-lg bg-slate-200/80" />
+        <Skeleton className="mt-4 h-1.5 w-full rounded-full bg-slate-200/80" />
       </div>
       {/* Line chart */}
       <div className="rounded-3xl border border-white/50 p-6" style={glass}>
@@ -593,6 +597,11 @@ export function AnalysisContent() {
   const [error, setError] = useState<string | null>(null)
   const [drillRaFilter, setDrillRaFilter] = useState(0)
 
+  // Season chart state — separate from main data so toggling doesn't re-fetch everything
+  const [seasonRaFilter, setSeasonRaFilter] = useState(0)
+  const [displayedSeasonRates, setDisplayedSeasonRates] = useState<AnalysisResponse["seasonWinRates"]>([])
+  const [seasonRateLoading, setSeasonRateLoading] = useState(false)
+
   const exploreRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -601,6 +610,7 @@ export function AnalysisContent() {
       .then(({ data: d, error: e }) => {
         if (e) throw new Error(e)
         setData(d)
+        setDisplayedSeasonRates(d.seasonWinRates)
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to load analysis")
@@ -608,8 +618,27 @@ export function AnalysisContent() {
       .finally(() => setLoading(false))
   }, [])
 
+  const handleSeasonFilterChange = useCallback(
+    (threshold: number) => {
+      setSeasonRaFilter(threshold)
+      if (!data) return
+      if (threshold === 0) {
+        setDisplayedSeasonRates(data.seasonWinRates)
+        return
+      }
+      setSeasonRateLoading(true)
+      fetch(`/api/analysis?seasonMinRA=${threshold}`)
+        .then((res) => res.json() as Promise<ApiResponse<AnalysisResponse>>)
+        .then(({ data: d }) => {
+          if (d) setDisplayedSeasonRates(d.seasonWinRates)
+        })
+        .catch(console.error)
+        .finally(() => setSeasonRateLoading(false))
+    },
+    [data]
+  )
+
   const handleBarClick = useCallback(
-    // Recharts passes the whole datum object as the first arg; cast to our shape
     (datum: unknown) => {
       const d = datum as WinRateDatum
       const threshold = d.threshold ?? 0
@@ -641,17 +670,19 @@ export function AnalysisContent() {
     label: `RA ≥ ${t.threshold}`,
     winPct: t.winPct,
     games: t.games,
-    spreadCoverRate: t.spreadCoverRate,
     threshold: t.threshold,
   }))
 
   const ra5 = data.thresholds.find((t) => t.threshold === 5)
   const ra7 = data.thresholds.find((t) => t.threshold === 7)
-  const hasSpreadData = data.thresholds.some((t) => t.spreadCoverRate !== null)
 
   const winRateTooltipRenderer = (props: TooltipContentProps) => (
     <WinRateTooltip {...props} />
   )
+
+  const pillBase =
+    "rounded-full px-3 py-1 text-xs font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17408B]/40"
+
   return (
     <div className="flex flex-col gap-6">
       <p className="max-w-2xl text-sm leading-relaxed text-slate-500">
@@ -682,7 +713,6 @@ export function AnalysisContent() {
         </p>
         <p className="mt-0.5 text-xs text-slate-400">
           Higher rest advantage = stronger signal
-          {hasSpreadData && " · Blue = win rate, green = ATS cover rate"}
           {" · "}
           <span className="font-medium text-[#17408B]/80">Click a bar to explore those games ↓</span>
         </p>
@@ -694,10 +724,6 @@ export function AnalysisContent() {
                 <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#17408B" stopOpacity={1} />
                   <stop offset="100%" stopColor="#17408B" stopOpacity={0.6} />
-                </linearGradient>
-                <linearGradient id="spreadGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#059669" stopOpacity={1} />
-                  <stop offset="100%" stopColor="#059669" stopOpacity={0.6} />
                 </linearGradient>
               </defs>
               <CartesianGrid
@@ -740,7 +766,7 @@ export function AnalysisContent() {
                 dataKey="winPct"
                 fill="url(#barGrad)"
                 radius={[6, 6, 0, 0]}
-                maxBarSize={hasSpreadData ? 48 : 72}
+                maxBarSize={72}
                 style={{ cursor: "pointer" }}
                 onClick={handleBarClick}
               >
@@ -753,74 +779,61 @@ export function AnalysisContent() {
                   style={{ fontSize: "10px", fill: "#94a3b8" }}
                 />
               </Bar>
-              {hasSpreadData && (
-                <Bar
-                  dataKey="spreadCoverRate"
-                  fill="url(#spreadGrad)"
-                  radius={[6, 6, 0, 0]}
-                  maxBarSize={48}
-                />
-              )}
-              {hasSpreadData && (
-                <Legend
-                  formatter={(value: string) =>
-                    value === "winPct" ? "Win Rate" : "ATS Cover Rate"
-                  }
-                  iconType="circle"
-                  iconSize={8}
-                  wrapperStyle={{ fontSize: "11px", color: "#64748b" }}
-                />
-              )}
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* ── 3. Home vs Away breakdown ─────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {/* Home team more rested */}
-        <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-          <p className="text-xs font-semibold uppercase tracking-wider text-[#17408B]">
-            Home Team More Rested
-          </p>
-          <p className="mt-3 text-5xl font-black tracking-tight text-slate-900">
-            {data.homeAwayBreakdown.homeTeamMoreRested.winPct}%
-          </p>
-          <p className="mt-1.5 text-sm text-slate-500">
-            {data.homeAwayBreakdown.homeTeamMoreRested.restedTeamWins.toLocaleString()} wins /{" "}
-            {data.homeAwayBreakdown.homeTeamMoreRested.games.toLocaleString()} games
-          </p>
-          <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-            <div
-              className="h-full rounded-full bg-[#17408B] transition-all duration-700"
-              style={{ width: `${data.homeAwayBreakdown.homeTeamMoreRested.winPct}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Away team more rested */}
-        <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-          <p className="text-xs font-semibold uppercase tracking-wider text-[#C9082A]">
-            Away Team More Rested
-          </p>
-          <p className="mt-3 text-5xl font-black tracking-tight text-slate-900">
-            {data.homeAwayBreakdown.awayTeamMoreRested.winPct}%
-          </p>
-          <p className="mt-1.5 text-sm text-slate-500">
-            {data.homeAwayBreakdown.awayTeamMoreRested.restedTeamWins.toLocaleString()} wins /{" "}
-            {data.homeAwayBreakdown.awayTeamMoreRested.games.toLocaleString()} games
-          </p>
-          <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-            <div
-              className="h-full rounded-full bg-[#C9082A] transition-all duration-700"
-              style={{ width: `${data.homeAwayBreakdown.awayTeamMoreRested.winPct}%` }}
-            />
-          </div>
+      {/* ── 3. Home team more rested breakdown (away removed per Task 4) ── */}
+      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
+        <p className="text-xs font-semibold uppercase tracking-wider text-[#17408B]">
+          Home Team More Rested
+        </p>
+        <p className="mt-3 text-5xl font-black tracking-tight text-slate-900">
+          {data.homeAwayBreakdown.homeTeamMoreRested.winPct}%
+        </p>
+        <p className="mt-1.5 text-sm text-slate-500">
+          {data.homeAwayBreakdown.homeTeamMoreRested.restedTeamWins.toLocaleString()} wins /{" "}
+          {data.homeAwayBreakdown.homeTeamMoreRested.games.toLocaleString()} games
+        </p>
+        <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+          <div
+            className="h-full rounded-full bg-[#17408B] transition-all duration-700"
+            style={{ width: `${data.homeAwayBreakdown.homeTeamMoreRested.winPct}%` }}
+          />
         </div>
       </div>
 
       {/* ── 4. Win rate by season ─────────────────────────────────── */}
-      <SeasonWinRateBySeasonChart data={data} />
+      <div className="rounded-3xl border border-white/50 p-6" style={glass}>
+        <p className="text-sm font-semibold text-slate-800">Win rate by season</p>
+        <p className="mt-0.5 text-xs text-slate-400">
+          Full regular-season sample (Oct–Apr) where the rest advantage meets the selected threshold.
+        </p>
+
+        {/* RA threshold toggle */}
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {RA_THRESHOLD_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => handleSeasonFilterChange(opt.value)}
+              className={cn(
+                pillBase,
+                seasonRaFilter === opt.value
+                  ? "bg-[#17408B] text-white shadow-sm"
+                  : "border border-slate-200 bg-white/60 text-slate-500 hover:border-[#17408B]/30 hover:text-[#17408B]"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        <SeasonWinRateBySeasonChart
+          seasonWinRates={displayedSeasonRates}
+          loading={seasonRateLoading}
+        />
+      </div>
 
       {/* ── 5. Key insight callout ────────────────────────────────── */}
       {ra5 && (
@@ -853,55 +866,7 @@ export function AnalysisContent() {
         </div>
       )}
 
-      {/* ── 6. ATS Performance ────────────────────────────────────── */}
-      {data.atsOverall && (
-        <div className="rounded-3xl border border-white/50 p-6" style={glass}>
-          <p className="text-sm font-semibold text-slate-800">ATS Performance</p>
-          <p className="mt-0.5 text-xs text-slate-400">
-            How often the more-rested team covers the spread
-          </p>
-
-          <div className="mt-5 flex items-end gap-3">
-            <p className="text-5xl font-black tracking-tight text-[#059669]">
-              {data.atsOverall.coverRate}%
-            </p>
-            <p className="mb-1 text-sm text-slate-500">
-              ATS cover rate ·{" "}
-              {data.atsOverall.covered}/{data.atsOverall.total} games
-            </p>
-          </div>
-          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-            <div
-              className="h-full rounded-full bg-[#059669] transition-all duration-700"
-              style={{ width: `${data.atsOverall.coverRate}%` }}
-            />
-          </div>
-
-          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {data.thresholds
-              .filter((t) => t.spreadCoverRate !== null)
-              .map((t) => (
-                <div
-                  key={t.threshold}
-                  className="rounded-2xl border border-white/60 px-3 py-3 text-center"
-                  style={{ background: "rgba(255,255,255,0.4)" }}
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                    RA ≥ {t.threshold}
-                  </p>
-                  <p className="mt-1 text-2xl font-black text-[#059669]">
-                    {t.spreadCoverRate}%
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-slate-400">
-                    {t.games.toLocaleString()} games
-                  </p>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── 7. Explore Games ──────────────────────────────────────── */}
+      {/* ── 6. Explore Games ──────────────────────────────────────── */}
       <ExploreGames exploreRef={exploreRef} initialRaFilter={drillRaFilter} />
 
     </div>
