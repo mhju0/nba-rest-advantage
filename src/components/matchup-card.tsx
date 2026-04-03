@@ -589,8 +589,8 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
               homeAbbr={homeBrand.abbreviation}
               awayAbbr={awayBrand.abbreviation}
             />
-            {game.status === "scheduled" && game.spread != null && (
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium tabular-nums text-slate-500">
+            {game.spread != null && (
+              <span className="inline-flex items-center rounded-full border border-[#17408B]/20 bg-[#17408B]/[0.06] px-2.5 py-0.5 text-xs font-medium tabular-nums text-[#17408B]/70">
                 {homeBrand.abbreviation} {game.spread > 0 ? "+" : ""}{game.spread}
               </span>
             )}

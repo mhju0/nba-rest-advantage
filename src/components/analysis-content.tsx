@@ -656,15 +656,7 @@ export function AnalysisContent() {
     <div className="flex flex-col gap-6">
       <p className="max-w-2xl text-sm leading-relaxed text-slate-500">
         Historical backtest: among final regular-season games with fatigue data, did the more-rested
-        team win? This does not read stored prediction rows. For graded predictions and the remaining
-        schedule, use the{" "}
-        <a
-          href="/tracker"
-          className="font-medium text-[#17408B] underline-offset-2 hover:underline"
-        >
-          Prediction Tracker
-        </a>
-        .
+        team win? This does not read stored prediction rows.
       </p>
 
       {/* ── 1. Hero stat ──────────────────────────────────────────── */}

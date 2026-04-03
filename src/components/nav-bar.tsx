@@ -9,7 +9,6 @@ import { cn } from "@/lib/utils"
 const NAV_LINKS = [
   { href: "/", label: "Today's Games" },
   { href: "/analysis", label: "Analysis" },
-  { href: "/tracker", label: "Picks" },
 ] as const
 
 function isActive(pathname: string, href: string): boolean {
