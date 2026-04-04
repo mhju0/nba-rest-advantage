@@ -234,15 +234,20 @@ function isSameArena(lat1: number, lon1: number, lat2: number, lon2: number): bo
 /**
  * One leg between consecutive games (great-circle / haversine, not road routing).
  *
- * - **Home → home:** 0 (no relocation).
- * - **Home → away:** home arena → opponent arena.
- * - **Away → home:** last opponent arena → home arena.
- * - **Away → away:** previous opponent arena → next opponent arena (direct road leg).
- *   We do **not** insert a round trip through the team’s home city on multi-day gaps;
- *   NBA clubs typically stay on the road for West/East swings, and the old “fly home
- *   between every pair of away games if gap ≥ 2 days” rule massively over-counted miles.
- * - **First game ever in chain (`previousGame === null`):** if tonight is away, count
- *   home → tonight’s arena (inbound to the trip or one-off road game).
+ * Contract (no phantom “fly home” between two road games — only fly home when the next
+ * game is actually at home):
+ *
+ * | Previous | Current | Miles |
+ * |----------|---------|--------|
+ * | Home | Away | Home arena → current opponent arena |
+ * | Away | Away (other city) | Previous road arena → current opponent arena |
+ * | Away | Home | Previous road arena → home arena |
+ * | Home | Home | 0 (same stand / no travel between games) |
+ *
+ * Same coordinates → 0 (covers back-to-back same building).
+ *
+ * **`previousGame === null`:** no prior game in this chain — away tonight counts as
+ * home → tonight’s arena; home tonight → 0.
  */
 function travelMilesBetweenGames(
   previousGame: RecentGame | null,

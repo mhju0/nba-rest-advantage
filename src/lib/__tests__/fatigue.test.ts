@@ -4,6 +4,7 @@ import {
   calculateRestAdvantage,
   type RecentGame,
 } from "@/lib/fatigue";
+import { haversineDistance } from "@/lib/haversine";
 
 /** Lakers home (approx STAPLES / Crypto.com arena). */
 const LA_LAT = 34.043;
@@ -306,6 +307,51 @@ describe("calculateFatigue", () => {
     const multiDayGap = fatigueAwayTeam("2025-01-04", recent, false, BOS_LAT, BOS_LON);
 
     expect(multiDayGap.travelDistanceMiles).toBe(oneDayGap.travelDistanceMiles);
+  });
+
+  it("travel: previous HOME → current AWAY is home arena → road arena (one leg)", () => {
+    const recent = [baseRecent({ date: "2025-01-10", isHome: true })];
+    const r = fatigueAwayTeam("2025-01-12", recent, false, DEN_LAT, DEN_LON);
+    const expected = Math.round(haversineDistance(LA_LAT, LA_LON, DEN_LAT, DEN_LON));
+    expect(r.travelDistanceMiles).toBe(expected);
+  });
+
+  it("travel: previous AWAY → current AWAY is prev road arena → next road arena (no home detour)", () => {
+    const recent: RecentGame[] = [
+      baseRecent({
+        date: "2025-01-01",
+        isHome: false,
+        opponentLat: NYC_LAT,
+        opponentLon: NYC_LON,
+      }),
+    ];
+    // Prior game falls outside 7-day window → single inter-game leg NYC → Boston only.
+    const r = fatigueAwayTeam("2025-01-25", recent, false, BOS_LAT, BOS_LON);
+    const expected = Math.round(haversineDistance(NYC_LAT, NYC_LON, BOS_LAT, BOS_LON));
+    expect(r.travelDistanceMiles).toBe(expected);
+  });
+
+  it("travel: previous AWAY → current HOME is road arena → home arena (one leg)", () => {
+    const recent: RecentGame[] = [
+      baseRecent({
+        date: "2025-01-01",
+        isHome: false,
+        opponentLat: BOS_LAT,
+        opponentLon: BOS_LON,
+      }),
+    ];
+    const r = fatigueHomeTeam("2025-01-20", recent);
+    const expected = Math.round(haversineDistance(BOS_LAT, BOS_LON, LA_LAT, LA_LON));
+    expect(r.travelDistanceMiles).toBe(expected);
+  });
+
+  it("travel: previous HOME → current HOME is 0 between games (home stand)", () => {
+    const recent: RecentGame[] = [
+      baseRecent({ date: "2025-01-10", isHome: true }),
+      baseRecent({ date: "2025-01-12", isHome: true }),
+    ];
+    const r = fatigueHomeTeam("2025-01-14", recent);
+    expect(r.travelDistanceMiles).toBe(0);
   });
 });
 
