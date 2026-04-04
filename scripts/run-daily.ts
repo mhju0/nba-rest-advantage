@@ -59,6 +59,10 @@ async function main(): Promise<void> {
 
   let fatigueRows = 0;
 
+  // TODO: Wrap per-game fatigue computation in try-catch so a single failure
+  // (e.g. missing coordinates) doesn't crash the entire batch. Currently low risk
+  // because team data comes from the seeded teams table, but would matter if the
+  // DB has partial data.
   for (const game of todaysGames) {
     const home = teamById.get(game.homeTeamId);
     const away = teamById.get(game.awayTeamId);
@@ -166,14 +170,12 @@ async function main(): Promise<void> {
       }
 
       const differential = a - h;
-      let predictedAdvantageTeamId: number;
-      if (differential > NEUTRAL_THRESHOLD) {
-        predictedAdvantageTeamId = game.homeTeamId;
-      } else if (differential < -NEUTRAL_THRESHOLD) {
-        predictedAdvantageTeamId = game.awayTeamId;
-      } else {
-        predictedAdvantageTeamId = h <= a ? game.homeTeamId : game.awayTeamId;
+      // Skip neutral games (|RA| < 0.5) — no meaningful rest advantage to predict on.
+      if (Math.abs(differential) < NEUTRAL_THRESHOLD) {
+        continue;
       }
+      const predictedAdvantageTeamId =
+        differential > 0 ? game.homeTeamId : game.awayTeamId;
 
       await appDb.insert(predictions).values({
         gameId: game.id,

@@ -151,12 +151,21 @@ function maxGamesInRollingCalendarSpan(dates: string[], spanDays: number): numbe
   return max;
 }
 
-function computeIsThreeInFour(recentGames: RecentGame[]): boolean {
-  return maxGamesInRollingCalendarSpan(sortedUniqueGameDates(recentGames), 4) >= 3;
+/**
+ * "3 in 4 nights" means tonight is the team's 3rd game in a 4-calendar-day
+ * span, so we must include the current game date in the rolling window count.
+ */
+function computeIsThreeInFour(recentGames: RecentGame[], gameDate: string): boolean {
+  const dates = [...sortedUniqueGameDates(recentGames), gameDate];
+  return maxGamesInRollingCalendarSpan(dates, 4) >= 3;
 }
 
-function computeIsFourInSix(recentGames: RecentGame[]): boolean {
-  return maxGamesInRollingCalendarSpan(sortedUniqueGameDates(recentGames), 6) >= 4;
+/**
+ * "4 in 6 nights" — same logic: tonight counts as one of the 4.
+ */
+function computeIsFourInSix(recentGames: RecentGame[], gameDate: string): boolean {
+  const dates = [...sortedUniqueGameDates(recentGames), gameDate];
+  return maxGamesInRollingCalendarSpan(dates, 6) >= 4;
 }
 
 function scheduleStressMultiplier(recentGames: RecentGame[], gameDate: string): number {
@@ -383,8 +392,8 @@ export function calculateFatigue(
 
   const games7 = countGamesInDaysBefore(recentGames, gameDate, 7);
   const games30 = countGamesInDaysBefore(recentGames, gameDate, 30);
-  const isThreeInFour = computeIsThreeInFour(recentGames);
-  const isFourInSix = computeIsFourInSix(recentGames);
+  const isThreeInFour = computeIsThreeInFour(recentGames, gameDate);
+  const isFourInSix = computeIsFourInSix(recentGames, gameDate);
   const stressMult = scheduleStressMultiplier(recentGames, gameDate);
 
   const { streak: roadStreak, awayVenueLons } = roadTripContext(
