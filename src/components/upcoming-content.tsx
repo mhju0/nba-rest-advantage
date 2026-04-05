@@ -35,7 +35,7 @@ function TeamLogo({ abbreviation }: { abbreviation: string }) {
 
   if (!nbaId || error) {
     return (
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-slate-100 font-heading text-[9px] font-bold text-slate-500">
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-slate-100 font-heading text-[10px] font-bold text-slate-500">
         {abbreviation}
       </span>
     )
@@ -84,7 +84,7 @@ export function UpcomingContent() {
   }, [raFilter, fetchGames])
 
   const pillBase =
-    "rounded-full px-3 py-1 text-xs font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17408B]/40"
+    "rounded-full px-3 py-1 text-sm font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17408B]/40"
 
   return (
     <div className="rounded-3xl border border-white/50 p-6" style={glass}>
@@ -108,7 +108,7 @@ export function UpcomingContent() {
 
       {/* ── Game count ────────────────────────────────────────────── */}
       {!loading && !error && (
-        <p className="mb-4 text-xs text-slate-400">
+        <p className="mb-4 text-sm text-slate-400">
           {games.length.toLocaleString()} game{games.length !== 1 ? "s" : ""} found
         </p>
       )}
@@ -122,15 +122,15 @@ export function UpcomingContent() {
         </div>
       ) : error ? (
         <div className="rounded-2xl border border-[#C9082A]/20 px-6 py-10 text-center">
-          <p className="text-sm text-[#C9082A]">{error}</p>
+          <p className="text-base text-[#C9082A]">{error}</p>
         </div>
       ) : games.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-200 px-6 py-12 text-center">
-          <p className="text-sm text-slate-400">No scheduled games match this filter.</p>
+          <p className="text-base text-slate-400">No scheduled games match this filter.</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-sm">
             <thead>
               <tr
                 style={{ background: "rgba(23,64,139,0.04)" }}
@@ -195,7 +195,7 @@ export function UpcomingContent() {
                     <td className="px-3 py-3 text-center">
                       <span
                         className={cn(
-                          "inline-flex items-center rounded-full px-2 py-0.5 font-heading text-[11px] font-bold text-white",
+                          "inline-flex items-center rounded-full px-2 py-0.5 font-heading text-xs font-bold text-white",
                           isHomeAdv ? "bg-[#17408B]" : "bg-[#C9082A]"
                         )}
                       >
