@@ -1,258 +1,200 @@
-# NBA Rest Advantage Analysis
+# 🏀 NBA Rest Advantage
 
-[![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js&logoColor=white)](https://nextjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3FCF8E?logo=supabase&logoColor=white)](https://supabase.com/)
-[![Vercel](https://img.shields.io/badge/Vercel-Deploy-000000?logo=vercel&logoColor=white)](https://vercel.com/)
+> 휴식과 이동 거리가 NBA 경기 결과에 미치는 영향을 정량화하는 풀스택 분석 플랫폼
 
-**NBA Rest Advantage Analysis** is a data-driven platform that quantifies how travel and schedule fatigue impact NBA game outcomes. It combines a weighted-decay fatigue model, historical backtesting, and live score updates so you can explore rest advantage (RA) for every matchup.
+**Live Demo → https://nba-rest-advantage.vercel.app** 
 
 ---
 
-## Key findings
+## 핵심 발견 (Key Findings)
 
-These figures come from the project’s historical backtest (final games with fatigue data, neutral threshold |RA| ≥ 0.5):
+1985-86 시즌부터 현재까지 약 **45,000경기** 이상을 분석한 결과:
 
-- **More-rested teams win 53.5%** of decidable games overall — a measurable edge over a coin flip.
-- **At RA ≥ 5**, the more-rested side wins **61.7%** of the time — the signal strengthens as the fatigue gap widens.
-- **Rest advantage does not erase home court**: when the **away** team is the more-rested side, they still win only **49.8%** — schedule load helps, but hosting still matters.
+| 지표 | 수치 |
+|---|---|
+| 더 많이 쉰 팀의 승률 | **~53.5%** |
+| Rest Advantage ≥ 5일 때 승률 | **~61.7%** |
+| 원정팀이 휴식 우위일 때 승률 | **~49.8%** (홈코트 효과 유지) |
 
----
-
-## Tech stack
-
-| Technology | Role |
-|------------|------|
-| **Next.js 16** (App Router) | Full-stack UI, API routes, static/dynamic rendering |
-| **TypeScript** | End-to-end type safety (strict mode) |
-| **Tailwind CSS v4** + **shadcn/ui** | Styling and accessible components |
-| **Supabase** | Managed PostgreSQL + **Realtime** subscriptions on `games` |
-| **Drizzle ORM** | Schema-first SQL access from Node |
-| **Recharts** | Analysis and tracker charts |
-| **Zod** | API input validation |
-| **date-fns** | Date handling |
-| **Python** (`nba_api`, `pandas`, `psycopg2`) | Scheduled ingestion and daily DB updates |
-| **Vitest** + **Playwright** | Unit and E2E tests |
-| **Vercel** | Production hosting + Cron for live score refresh |
-| **GitHub Actions** | Nightly pipeline for scores, fatigue, and predictions |
+**→ 휴식 우위는 실질적인 승률 차이를 만들지만, 홈코트 어드밴티지를 뒤집지는 못한다.**
 
 ---
 
-## Architecture
+## 프로젝트 소개
 
-```text
-Python pipeline (nba_api) ──► Supabase Postgres ◄── Drizzle / Next.js API
-                                      │
-                                      ├──► Next.js App (React Server + Client Components)
-                                      │
-                                      └──► Supabase Realtime ──► Browser (live scores)
+NBA Rest Advantage는 단순한 "며칠 쉬었는가"를 넘어, **다중 요인 피로도 모델**을 통해 팀의 컨디션을 수치화합니다.
+
+### 피로도 모델 구성 요소
+
+- **지수 감쇠 부하** — 최근 경기일수록 높은 가중치 (30일 lookback)
+- **이동 거리** — 7일간 총 이동 거리 (로그 스케일)
+- **원정 연속 부하** — 연속 원정 경기 + 대륙 횡단 탐지
+- **일정 밀도** — 6/7/12/15/30일 윈도우별 경기 밀도
+- **배수 보정** — 백투백(1.38×), 고도(DEN/UTA 1.15×)
+- **휴식 보너스** — 3일 이상 휴식 시 피로도 감소 (최대 -2.0)
+- **연장전** — 전 경기 OT 시 추가 피로 (+0.5 ~ +1.0)
+
+### 분석 제외 대상
+
+- **2019-20 시즌** — COVID 버블(올랜도 단일 장소)로 이동 데이터 무의미
+- **플레이오프** — 고정 2팀 시리즈로 피로 모델 전제 위반
+
+---
+
+## 기능
+
+| 페이지 | 설명 |
+|---|---|
+| **Today's Games** | 오늘 경기의 피로도 비교 + 실시간 스코어 |
+| **Analysis** | 시즌별 휴식 우위 승률 차트 + RA 임계값 토글 |
+| **Picks** | 다가오는 경기 중 RA 기반 예측 |
+| **Game Detail** | 경기 클릭 시 최근 5경기 이력 + 상세 피로 분석 |
+
+---
+
+## Tech Stack
+
+```
+Frontend    Next.js 15 (App Router) · TypeScript · Tailwind CSS v4 · shadcn/ui · Recharts
+Backend     Next.js API Routes · Drizzle ORM · Zod
+Database    Supabase (PostgreSQL)
+Pipeline    Python (nba_api, pandas, psycopg2)
+Infra       Vercel · GitHub Actions (daily cron)
+Testing     Vitest · Playwright
 ```
 
-1. **Ingestion** — Python scripts pull schedule and box scores into Postgres.
-2. **Fatigue layer** — TypeScript computes per-team fatigue for each game from travel, density, back-to-backs, and altitude.
-3. **API** — Route handlers expose games by date, aggregate analysis, and prediction accuracy.
-4. **Frontend** — Dashboard, analysis, and tracker pages consume those APIs; the home view can subscribe to row changes on `games`.
+---
+
+## 아키텍처
+
+```
+┌─────────────────────────────────────────────────────┐
+│  GitHub Actions (21:00 UTC daily)                   │
+│  daily_update.py                                    │
+│    ├── NBA CDN → 스케줄 fetch                       │
+│    ├── nba_api → 스코어 업데이트                      │
+│    ├── BoxScoreSummary → 연장전 확인                  │
+│    └── run-daily.ts → 피로도 계산 + 예측 생성          │
+└──────────────────┬──────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────┐
+│  Supabase PostgreSQL                                │
+│    teams · games · fatigue_scores · predictions     │
+└──────────────────┬──────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────┐
+│  Next.js 15 (Vercel)                                │
+│    API Routes → Drizzle ORM queries                 │
+│    Server Components → Client Components            │
+│    Supabase Realtime → 실시간 스코어 업데이트           │
+└─────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Getting started
+## 로컬 실행 방법
 
-### Prerequisites
+### 사전 요구사항
 
-- **Node.js** 20+
-- **pnpm** 9+
-- **Python** 3.11+ (for scripts under `scripts/`)
-- A **Supabase** project (Postgres + optional Realtime on `games`)
+- Node.js 20+
+- pnpm
+- Python 3.10+
+- Supabase 프로젝트 (PostgreSQL)
 
-### Installation
+### 설치
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/mhju0/nba-rest-advantage.git
 cd nba-rest-advantage
 pnpm install
 ```
 
-Copy `.env.example` to `.env.local` and set variables (see below).
+### 환경 변수
 
-Apply the schema (from project root):
+`.env.local` 파일 생성:
 
-```bash
-pnpm drizzle-kit push
+```env
+DATABASE_URL=postgresql://...
+NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+CRON_SECRET=your-secret
 ```
 
-Seed teams and historical games using the Python tooling in `scripts/` as needed (`seed_teams.py`, `fetch_schedule.py`).
+### 데이터 초기 세팅
 
-### Environment variables
+```bash
+# 1. 팀 데이터 시드
+python scripts/seed_teams.py
 
-| Variable | Scope | Description |
-|----------|--------|-------------|
-| `DATABASE_URL` | **Server only** | Postgres connection string (never `NEXT_PUBLIC_`) |
-| `NEXT_PUBLIC_SUPABASE_URL` | Client + server | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client + server | Supabase anon key (browser-safe) |
-| `CRON_SECRET` | Server only | Bearer token for `GET /api/cron/update` |
-| `THE_ODDS_API_KEY` | Server only | Free API key from [the-odds-api.com](https://the-odds-api.com) (optional; enables moneyline odds) |
+# 2. 과거 경기 데이터 수집 (수 시간 소요)
+python scripts/fetch_schedule.py
 
-### Run locally
+# 3. 피로도 일괄 계산
+pnpm exec tsx scripts/backfill_fatigue.ts
+
+# 4. 예측 일괄 생성
+pnpm exec tsx scripts/backfill_predictions.ts
+
+# 5. 현재 시즌 미래 경기 세팅
+python scripts/fetch_nba_schedule_cdn.py
+```
+
+### 개발 서버
 
 ```bash
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+---
 
-### Tests
+## 프로젝트 구조
 
-```bash
-pnpm test:run      # Vitest (unit / API handler tests)
-pnpm test:e2e      # Playwright (requires dev server / install browsers)
+```
+src/
+├── app/                    # Next.js App Router 페이지 + API
+│   ├── page.tsx            # Today's Games (홈)
+│   ├── analysis/           # 분석 대시보드
+│   ├── tracker/            # Picks 페이지
+│   └── api/                # REST API 엔드포인트
+├── components/             # UI 컴포넌트
+├── lib/
+│   ├── fatigue.ts          # 피로도 모델 코어 로직
+│   ├── db/schema.ts        # Drizzle ORM 스키마
+│   ├── haversine.ts        # 구면 거리 계산
+│   └── team-history.ts     # 역대 팀 브랜딩 매핑
+└── types/                  # TypeScript 인터페이스
+scripts/                    # Python + TS 데이터 파이프라인
 ```
 
 ---
 
-## Project structure (abbreviated)
+## Design
 
-```text
-nba-rest-advantage/
-├── e2e/                    # Playwright specs
-├── scripts/                # Python data pipeline + daily_update.py
-├── src/
-│   ├── app/                # App Router pages + API routes
-│   ├── components/         # UI components
-│   ├── hooks/              # Client hooks (e.g. Realtime)
-│   ├── lib/
-│   │   ├── db/             # Drizzle schema + queries
-│   │   ├── fatigue.ts      # Fatigue algorithm
-│   │   └── ...
-│   └── types/              # Shared TS types
-├── vercel.json             # Vercel Cron schedule
-├── playwright.config.ts
-└── vitest.config.ts
-```
+글래스모피즘(Glassmorphism) 기반 UI에 NBA 브랜드 컬러를 적용했습니다.
+
+- 반투명 카드 + `backdrop-filter: blur(16px)`
+- 애니메이션 그라데이션 배경
+- NBA CDN 팀 로고 + 역대 팀 로고(ESPN CDN) 지원
+- 피로도 바 색상 스케일링 (녹색 → 빨간색)
 
 ---
 
-## API reference
+## Summary
 
-All JSON responses use the shape `{ data, error, meta? }` unless noted.
+**NBA Rest Advantage** is a full-stack analytics platform that quantifies how travel distance, schedule density, and rest patterns affect NBA game outcomes across 40 years of data (1985–present).
 
-### `GET /api/games/[date]`
+The core fatigue model considers exponential decay load, log-scaled travel distance, back-to-back multipliers, altitude adjustments, schedule density across multiple windows, and overtime penalties — going far beyond simple "days of rest" metrics.
 
-- **Params:** `date` = `YYYY-MM-DD`
-- **200:** `{ data: GameResponse[], error: null }`
-- **400:** invalid date format — `{ data: [], error: string }`
-
-**Example (`200`):**
-
-```json
-{
-  "data": [
-    {
-      "id": 1,
-      "externalId": "0022400123",
-      "date": "2024-12-25",
-      "season": "2024-25",
-      "status": "scheduled",
-      "homeScore": null,
-      "awayScore": null,
-      "homeTeam": { "id": 1, "name": "Celtics", "abbreviation": "BOS", "city": "Boston" },
-      "awayTeam": { "id": 2, "name": "Lakers", "abbreviation": "LAL", "city": "Los Angeles" },
-      "homeFatigue": { "score": 2.1, "isBackToBack": false, "is3In4": false, "travelDistanceMiles": 400, "altitudePenalty": false },
-      "awayFatigue": { "score": 5.3, "isBackToBack": true, "is3In4": true, "travelDistanceMiles": 2100, "altitudePenalty": true },
-      "restAdvantage": { "differential": 3.2, "advantageTeam": "home" }
-    }
-  ],
-  "error": null
-}
-```
-
-### `GET /api/analysis`
-
-- **200:** Season-level backtest — `totalGames`, `overallWinRate`, `thresholds[]`, `homeAwayBreakdown`, `monthlyTrends`
-- Cached (ISR) — data changes when new final games land.
-
-**Example (trimmed):**
-
-```json
-{
-  "data": {
-    "totalGames": 1200,
-    "overallWins": 642,
-    "overallWinRate": 53.5,
-    "thresholds": [
-      { "threshold": 2, "games": 900, "restedTeamWins": 480, "winPct": 53.3, "spreadCoverRate": 51.2 }
-    ],
-    "homeAwayBreakdown": {
-      "homeTeamMoreRested": { "games": 600, "restedTeamWins": 330, "winPct": 55.0 },
-      "awayTeamMoreRested": { "games": 600, "restedTeamWins": 299, "winPct": 49.8 }
-    },
-    "monthlyTrends": [{ "month": "2024-01", "games": 220, "restedTeamWins": 118, "winPct": 53.6 }]
-  },
-  "error": null
-}
-```
-
-### `GET /api/analysis/accuracy`
-
-- **200:** Prediction tracker payload — `totalPredictions`, `accuracyPct`, `tiers`, `rolling30Days`, `recentPredictions`
-
-**Example (trimmed):**
-
-```json
-{
-  "data": {
-    "totalPredictions": 150,
-    "correctPredictions": 81,
-    "accuracyPct": 54.0,
-    "tiers": [
-      { "label": "low", "range": "0–2", "games": 50, "correct": 26, "accuracyPct": 52.0 }
-    ],
-    "rolling30Days": [],
-    "recentPredictions": []
-  },
-  "error": null
-}
-```
-
-### `GET /api/cron/update` (automation)
-
-- **Purpose:** Refresh **today’s** live/scheduled games from the NBA CDN (used by Vercel Cron).
-- **Auth:** `Authorization: Bearer <CRON_SECRET>` when `CRON_SECRET` is set.
-- **200:** `{ data: { gamesUpdated: number }, error: null, meta?: {...} }`
-
----
-
-## How it works (fatigue model)
-
-Fatigue is **not** a flat checklist of penalties. It uses:
-
-1. **Exponential decay load** — Recent games weigh more; older games fade smoothly.
-2. **Log-scaled travel** — Miles add fatigue with diminishing returns.
-3. **Multipliers** — Back-to-backs, altitude (visitor at DEN/UTA), and schedule density compound the base load.
-4. **Freshness bonus** — Extra days off reduce the score (capped, diminishing returns).
-
-**Rest advantage** for a matchup is `awayFatigue − homeFatigue`. Positive ⇒ home is relatively more rested; negative ⇒ away is.
-
-Constants live in `src/lib/fatigue.ts` so they can be tuned after backtesting.
-
----
-
-## Deployment
-
-- **Vercel:** Connect the repo, set `DATABASE_URL`, `NEXT_PUBLIC_*` Supabase vars, and `CRON_SECRET`. Production API errors return generic messages; details are logged server-side only.
-- **Cron:** `vercel.json` schedules `GET /api/cron/update` once daily at **10:00 UTC** (7 PM KST), compatible with Vercel Hobby’s daily cron limit; GitHub Actions can still run more frequent updates if needed.
-- **GitHub Actions:** `.github/workflows/daily-update.yml` runs nightly (UTC) to finalize yesterday’s scores and run `scripts/daily_update.py`, which calls `pnpm exec tsx scripts/run-daily.ts` for today’s fatigue and predictions. Set the **`DATABASE_URL`** secret in the repo settings.
-
----
-
-## Future improvements
-
-- **KBO (or other leagues)** — Reuse the pipeline pattern with league-specific schedules and arenas.
-- **ML-enhanced predictions** — Blend fatigue features with pace, injuries, and market lines.
-- **Player-level fatigue** — Minutes-load and travel at the roster level instead of team aggregates.
-- **Historical betting lines** — Joint backtests of RA vs spread and closing line value.
+Built with Next.js 15, TypeScript, Supabase, and Python, with automated daily data pipelines via GitHub Actions.
 
 ---
 
 ## License
 
-Private / portfolio project unless otherwise noted.
+MIT
+
+---
+
+<p align="center">Built by MJ</p>
