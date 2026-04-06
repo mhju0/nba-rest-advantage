@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import {
   BarChart,
   Bar,
@@ -13,15 +13,16 @@ import {
   LabelList,
 } from "recharts"
 import type { TooltipContentProps } from "recharts"
+import useSWR from "swr"
 import { format } from "date-fns"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { ExploreGameDetailModal } from "@/components/explore-game-detail-modal"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
+import { apiFetcher } from "@/lib/fetcher"
 import { NBA_SEASONS } from "@/lib/nba-season"
 import type {
   AnalysisResponse,
-  ApiResponse,
   GameSearchResponse,
   GameSearchResult,
 } from "@/types"
@@ -270,55 +271,35 @@ function ExploreGames({
   const [seasonFilter, setSeasonFilter] = useState("")
   const [resultFilter, setResultFilter] = useState<"all" | "correct" | "incorrect">("all")
   const [page, setPage] = useState(1)
-  const [results, setResults] = useState<GameSearchResult[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [detailGameId, setDetailGameId] = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
 
   // Sync when parent changes the RA filter via bar chart click
-  useEffect(() => {
+  if (initialRaFilter !== raFilter && initialRaFilter !== 0) {
     setRaFilter(initialRaFilter)
     setPage(1)
-  }, [initialRaFilter])
+  }
 
-  const doFetch = useCallback(
-    async (opts: {
-      raFilter: number
-      teamFilter: string
-      seasonFilter: string
-      resultFilter: string
-      page: number
-    }) => {
-      setLoading(true)
-      setError(null)
-      try {
-        const params = new URLSearchParams()
-        if (opts.raFilter > 0) params.set("minRA", String(opts.raFilter))
-        if (opts.teamFilter) params.set("team", opts.teamFilter)
-        if (opts.seasonFilter) params.set("season", opts.seasonFilter)
-        if (opts.resultFilter !== "all") params.set("result", opts.resultFilter)
-        params.set("page", String(opts.page))
-        params.set("limit", String(PAGE_SIZE))
+  // Build SWR key from all filter state
+  const searchParams = new URLSearchParams()
+  if (raFilter > 0) searchParams.set("minRA", String(raFilter))
+  if (teamFilter) searchParams.set("team", teamFilter)
+  if (seasonFilter) searchParams.set("season", seasonFilter)
+  if (resultFilter !== "all") searchParams.set("result", resultFilter)
+  searchParams.set("page", String(page))
+  searchParams.set("limit", String(PAGE_SIZE))
+  const searchKey = `/api/games/search?${searchParams}`
 
-        const res = await fetch(`/api/games/search?${params}`)
-        const json = (await res.json()) as ApiResponse<GameSearchResponse>
-        if (json.error) throw new Error(json.error)
-        setResults(json.data.games)
-        setTotal(json.data.total)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load games")
-      } finally {
-        setLoading(false)
-      }
-    },
-    []
+  const { data: searchData, error: searchError, isLoading: loading } = useSWR<GameSearchResponse>(
+    searchKey,
+    apiFetcher,
+    { revalidateOnFocus: false, keepPreviousData: true }
   )
-
-  useEffect(() => {
-    void doFetch({ raFilter, teamFilter, seasonFilter, resultFilter, page })
-  }, [raFilter, teamFilter, seasonFilter, resultFilter, page, doFetch])
+  const results = searchData?.games ?? []
+  const total = searchData?.total ?? 0
+  const error = searchError
+    ? (searchError instanceof Error ? searchError.message : "Failed to load games")
+    : null
 
   const handleRaChange = useCallback((v: number) => {
     setRaFilter(v)
@@ -592,50 +573,43 @@ function ExploreGames({
 // ─── Main component ───────────────────────────────────────────────
 
 export function AnalysisContent() {
-  const [data, setData] = useState<AnalysisResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [drillRaFilter, setDrillRaFilter] = useState(0)
 
   // Season chart state — separate from main data so toggling doesn't re-fetch everything
   const [seasonRaFilter, setSeasonRaFilter] = useState(0)
-  const [displayedSeasonRates, setDisplayedSeasonRates] = useState<AnalysisResponse["seasonWinRates"]>([])
-  const [seasonRateLoading, setSeasonRateLoading] = useState(false)
 
   const exploreRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    fetch("/api/analysis")
-      .then((res) => res.json() as Promise<ApiResponse<AnalysisResponse>>)
-      .then(({ data: d, error: e }) => {
-        if (e) throw new Error(e)
-        setData(d)
-        setDisplayedSeasonRates(d.seasonWinRates)
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Failed to load analysis")
-      })
-      .finally(() => setLoading(false))
-  }, [])
+  // Main analysis data
+  const { data, error: swrError, isLoading: loading } = useSWR<AnalysisResponse>(
+    "/api/analysis",
+    apiFetcher,
+    { revalidateOnFocus: false }
+  )
+  const error = swrError
+    ? (swrError instanceof Error ? swrError.message : "Failed to load analysis")
+    : null
+
+  // Season win rates at a specific RA threshold (only fetched when threshold > 0)
+  const seasonSwrKey = seasonRaFilter > 0
+    ? `/api/analysis?seasonMinRA=${seasonRaFilter}`
+    : null
+  const { data: seasonData, isLoading: seasonRateLoading } = useSWR<AnalysisResponse>(
+    seasonSwrKey,
+    apiFetcher,
+    { revalidateOnFocus: false }
+  )
+
+  // Use filtered season data when a threshold is active, otherwise fall back to main data
+  const displayedSeasonRates = seasonRaFilter > 0
+    ? (seasonData?.seasonWinRates ?? [])
+    : (data?.seasonWinRates ?? [])
 
   const handleSeasonFilterChange = useCallback(
     (threshold: number) => {
       setSeasonRaFilter(threshold)
-      if (!data) return
-      if (threshold === 0) {
-        setDisplayedSeasonRates(data.seasonWinRates)
-        return
-      }
-      setSeasonRateLoading(true)
-      fetch(`/api/analysis?seasonMinRA=${threshold}`)
-        .then((res) => res.json() as Promise<ApiResponse<AnalysisResponse>>)
-        .then(({ data: d }) => {
-          if (d) setDisplayedSeasonRates(d.seasonWinRates)
-        })
-        .catch(console.error)
-        .finally(() => setSeasonRateLoading(false))
     },
-    [data]
+    []
   )
 
   const handleBarClick = useCallback(

@@ -1,12 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useState } from "react"
 import Image from "next/image"
+import useSWR from "swr"
 import { format } from "date-fns"
 import { cn } from "@/lib/utils"
 import { NBA_TEAM_IDS } from "@/lib/nba-team-ids"
+import { apiFetcher } from "@/lib/fetcher"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { ApiResponse, UpcomingGameWithRA } from "@/types"
+import type { UpcomingGameWithRA } from "@/types"
 
 // ─── Shared styles ─────────────────────────────────────────────────
 
@@ -58,30 +60,17 @@ function TeamLogo({ abbreviation }: { abbreviation: string }) {
 
 export function UpcomingContent() {
   const [raFilter, setRaFilter] = useState(0)
-  const [games, setGames] = useState<UpcomingGameWithRA[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
 
-  const fetchGames = useCallback(async (minRA: number) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const params = new URLSearchParams({ season: "2025-26" })
-      if (minRA > 0) params.set("minRA", String(minRA))
-      const res = await fetch(`/api/games/upcoming?${params}`)
-      const json = (await res.json()) as ApiResponse<UpcomingGameWithRA[]>
-      if (json.error) throw new Error(json.error)
-      setGames(json.data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load games")
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const params = new URLSearchParams({ season: "2025-26" })
+  if (raFilter > 0) params.set("minRA", String(raFilter))
+  const swrKey = `/api/games/upcoming?${params}`
 
-  useEffect(() => {
-    void fetchGames(raFilter)
-  }, [raFilter, fetchGames])
+  const { data: games, error: swrError, isLoading: loading } = useSWR<UpcomingGameWithRA[]>(
+    swrKey,
+    apiFetcher,
+    { revalidateOnFocus: false }
+  )
+  const error = swrError ? (swrError instanceof Error ? swrError.message : "Failed to load games") : null
 
   const pillBase =
     "rounded-full px-3 py-1 text-sm font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17408B]/40"
@@ -107,7 +96,7 @@ export function UpcomingContent() {
       </div>
 
       {/* ── Game count ────────────────────────────────────────────── */}
-      {!loading && !error && (
+      {!loading && !error && games && (
         <p className="mb-4 text-sm text-slate-400">
           {games.length.toLocaleString()} game{games.length !== 1 ? "s" : ""} found
         </p>
@@ -124,7 +113,7 @@ export function UpcomingContent() {
         <div className="rounded-2xl border border-[#C9082A]/20 px-6 py-10 text-center">
           <p className="text-base text-[#C9082A]">{error}</p>
         </div>
-      ) : games.length === 0 ? (
+      ) : !games || games.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-200 px-6 py-12 text-center">
           <p className="text-base text-slate-400">No scheduled games match this filter.</p>
         </div>

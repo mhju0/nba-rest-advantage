@@ -139,12 +139,13 @@ export default function HomePage() {
         })
 
   // Sync calendar month tab when the selected day moves (e.g. prev/next across a month boundary).
-  useEffect(() => {
-    if (!selectedDateKey) return
+  // Derived during render instead of useEffect to avoid an extra re-render cycle.
+  if (selectedDateKey) {
     const m = Number(selectedDateKey.slice(5, 7))
-    if (!NBA_REGULAR_MONTHS.some((x) => x.value === m)) return
-    setMonth((prev) => (m !== prev ? m : prev))
-  }, [selectedDateKey])
+    if (NBA_REGULAR_MONTHS.some((x) => x.value === m) && m !== month) {
+      setMonth(m)
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController()

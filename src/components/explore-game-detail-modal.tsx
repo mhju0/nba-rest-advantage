@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useState } from "react"
 import { createPortal } from "react-dom"
+import useSWR from "swr"
 import { format, parseISO } from "date-fns"
 import { ChevronLeft, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -12,9 +13,9 @@ import {
   TeamRow,
 } from "@/components/matchup-card"
 import { getTeamBranding } from "@/lib/team-history"
+import { apiFetcher } from "@/lib/fetcher"
 import { cn } from "@/lib/utils"
 import type {
-  ApiResponse,
   GameDetailResponse,
   GameResponse,
   TeamRecentResultGame,
@@ -214,9 +215,6 @@ export function ExploreGameDetailModal({
   onOpenChange: (open: boolean) => void
 }) {
   const titleId = useId()
-  const [detail, setDetail] = useState<GameDetailResponse | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   // Navigation stack: history of game IDs to go back to
   const [navHistory, setNavHistory] = useState<number[]>([])
@@ -225,46 +223,20 @@ export function ExploreGameDetailModal({
 
   // Reset state whenever the modal opens or the root gameId changes
   useEffect(() => {
-    if (!open) {
-      setNavHistory([])
-      setActiveGameId(gameId)
-      setDetail(null)
-      setError(null)
-      return
-    }
-    // Modal just opened with a (potentially new) gameId
     setNavHistory([])
     setActiveGameId(gameId)
   }, [open, gameId])
 
-  // Fetch game detail whenever activeGameId changes (and modal is open)
-  useEffect(() => {
-    if (!open || activeGameId === null) {
-      setDetail(null)
-      setError(null)
-      return
-    }
-
-    const ac = new AbortController()
-    setLoading(true)
-    setError(null)
-
-    void fetch(`/api/game/${activeGameId}`, { signal: ac.signal })
-      .then(async (res) => {
-        const json = (await res.json()) as ApiResponse<GameDetailResponse | null>
-        if (!res.ok) throw new Error(json.error ?? res.statusText)
-        if (!json.data) throw new Error("No data")
-        setDetail(json.data)
-      })
-      .catch((err: unknown) => {
-        if (err instanceof Error && err.name === "AbortError") return
-        setError(err instanceof Error ? err.message : "Failed to load")
-        setDetail(null)
-      })
-      .finally(() => setLoading(false))
-
-    return () => ac.abort()
-  }, [open, activeGameId])
+  // SWR fetches game detail — only when modal is open and we have an ID
+  const swrKey = open && activeGameId !== null ? `/api/game/${activeGameId}` : null
+  const {
+    data: detail,
+    error: swrError,
+    isLoading: loading,
+  } = useSWR<GameDetailResponse>(swrKey, apiFetcher, { revalidateOnFocus: false })
+  const error = swrError
+    ? (swrError instanceof Error ? swrError.message : "Failed to load")
+    : null
 
   const navigateTo = useCallback(
     (id: number) => {

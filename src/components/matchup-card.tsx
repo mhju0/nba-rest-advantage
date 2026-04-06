@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState, type KeyboardEvent } from "react"
+import { useCallback, useMemo, useState, type KeyboardEvent } from "react"
 import Image from "next/image"
 import { ChevronDown } from "lucide-react"
 import {
@@ -474,14 +474,17 @@ interface MatchupCardProps {
 export function MatchupCard({ game, index = 0, isScoreFlashing = false }: MatchupCardProps) {
   const [expanded, setExpanded] = useState(false)
 
-  const homeBrand = getTeamBranding(game.homeTeam.abbreviation, game.season, {
-    name: game.homeTeam.name,
-    city: game.homeTeam.city,
-  })
-  const awayBrand = getTeamBranding(game.awayTeam.abbreviation, game.season, {
-    name: game.awayTeam.name,
-    city: game.awayTeam.city,
-  })
+  const homeFallback = useMemo(
+    () => ({ name: game.homeTeam.name, city: game.homeTeam.city }),
+    [game.homeTeam.name, game.homeTeam.city]
+  )
+  const awayFallback = useMemo(
+    () => ({ name: game.awayTeam.name, city: game.awayTeam.city }),
+    [game.awayTeam.name, game.awayTeam.city]
+  )
+
+  const homeBrand = getTeamBranding(game.homeTeam.abbreviation, game.season, homeFallback)
+  const awayBrand = getTeamBranding(game.awayTeam.abbreviation, game.season, awayFallback)
 
   const absDiff = Math.abs(game.restAdvantage?.differential ?? 0)
   const showHighlight = !!game.restAdvantage && absDiff >= HIGHLIGHT_THRESHOLD
@@ -572,10 +575,7 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
             abbreviation={game.awayTeam.abbreviation}
             displayAbbreviation={awayBrand.abbreviation}
             season={game.season}
-            teamFallback={{
-              name: game.awayTeam.name,
-              city: game.awayTeam.city,
-            }}
+            teamFallback={awayFallback}
             fatigue={game.awayFatigue}
             score={game.awayFatigue?.score ?? null}
             highlight={awayHighlight}
@@ -594,10 +594,7 @@ export function MatchupCard({ game, index = 0, isScoreFlashing = false }: Matchu
             abbreviation={game.homeTeam.abbreviation}
             displayAbbreviation={homeBrand.abbreviation}
             season={game.season}
-            teamFallback={{
-              name: game.homeTeam.name,
-              city: game.homeTeam.city,
-            }}
+            teamFallback={homeFallback}
             fatigue={game.homeFatigue}
             score={game.homeFatigue?.score ?? null}
             highlight={homeHighlight}

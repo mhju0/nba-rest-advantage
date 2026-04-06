@@ -32,6 +32,8 @@ export function useLiveGames(gameIds: number[]) {
     setLiveUpdates({});
     setRecentlyUpdated(new Set());
 
+    const idSet = new Set(gameIds);
+
     const channel = supabase
       .channel(`games-live-${gameIds.join(",")}`)
       .on(
@@ -49,8 +51,8 @@ export function useLiveGames(gameIds: number[]) {
             status: string;
           };
 
-          // Only process updates for games we're tracking
-          if (!gameIds.includes(row.id)) return;
+          // Only process updates for games we're tracking (O(1) Set lookup)
+          if (!idSet.has(row.id)) return;
 
           setLiveUpdates((prev) => ({
             ...prev,
