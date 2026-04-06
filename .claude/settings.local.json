@@ -20,7 +20,10 @@
       "Bash(pnpm add:*)",
       "Bash(pnpm install:*)",
       "Bash(pnpm ls:*)",
-      "Bash(pnpm test:run)"
+      "Bash(pnpm test:run)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
