@@ -29,6 +29,14 @@ venv/
 *.swp
 *.swo
 
+# AI assistants — entire Claude Code directory stays local (never commit)
+.claude/
+
+# Cursor — local agent state; allow committing team rules under .cursor/rules/
+.cursor/**
+!.cursor/rules/
+!.cursor/rules/**
+
 # OS
 .DS_Store
 Thumbs.db
@@ -58,5 +66,3 @@ pnpm-debug.log*
 # lockfiles (pnpm project — only pnpm-lock.yaml is canonical)
 package-lock.json
 yarn.lock
-
-.claude/worktrees
