@@ -52,6 +52,28 @@ LOOKBACK_DAYS = 7
 LOOKAHEAD_DAYS = 60
 
 
+def resolve_database_url() -> str:
+    """
+    Prefer DATABASE_URL from the process environment (GitHub Actions, shell export).
+    If unset or blank, load repo-root .env.local then scripts/.env and read again.
+    """
+    url = (os.environ.get("DATABASE_URL") or "").strip()
+    if url:
+        return url
+    load_dotenv(REPO_ROOT / ".env.local")
+    load_dotenv(REPO_ROOT / "scripts" / ".env")
+    url = (os.environ.get("DATABASE_URL") or "").strip()
+    if not url:
+        print(
+            "ERROR: DATABASE_URL is not set. "
+            "Set it in the environment (e.g. GitHub Actions secret DATABASE_URL) "
+            "or add it to .env.local or scripts/.env for local development.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return url
+
+
 def refresh_ot_lookback_finals(conn, today: date, records: list[tuple]) -> int:
     """
     Refresh overtime_periods for finals in [today - LOOKBACK_DAYS, today) so downstream
@@ -88,13 +110,7 @@ def refresh_ot_lookback_finals(conn, today: date, records: list[tuple]) -> int:
 
 
 def main() -> None:
-    load_dotenv(REPO_ROOT / ".env.local")
-    load_dotenv(REPO_ROOT / "scripts" / ".env")
-
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        print("ERROR: DATABASE_URL is not set", file=sys.stderr)
-        sys.exit(1)
+    database_url = resolve_database_url()
 
     et = ZoneInfo("America/New_York")
     now_et = datetime.now(et)

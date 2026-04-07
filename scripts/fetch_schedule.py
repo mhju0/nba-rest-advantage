@@ -8,7 +8,8 @@ Safe to run multiple times — uses INSERT ... ON CONFLICT (external_id) DO UPDA
 for scores, status, overtime_periods, and game_type so current-season rows refresh
 when games go final.
 
-Reads DATABASE_URL from scripts/.env.
+DATABASE_URL: use the process environment first (e.g. GitHub Actions); otherwise
+load from scripts/.env for local development.
 
 Skipped season — 2019-20 (COVID bubble):
   After the March 2020 shutdown, the league finished the season in a single-site
@@ -45,11 +46,17 @@ if _SCRIPTS_DIR not in sys.path:
 
 from nba_ot_periods import fetch_overtime_periods
 
-load_dotenv(Path(__file__).parent / ".env")
+_scripts_env = Path(__file__).parent / ".env"
+if not (os.environ.get("DATABASE_URL") or "").strip():
+    load_dotenv(_scripts_env)
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = (os.environ.get("DATABASE_URL") or "").strip()
 if not DATABASE_URL:
-    sys.exit("ERROR: DATABASE_URL not set in scripts/.env")
+    sys.exit(
+        "ERROR: DATABASE_URL is not set. "
+        "Set it in the environment (e.g. GitHub Actions secret DATABASE_URL) "
+        "or add it to scripts/.env for local development."
+    )
 
 # Set NBA_SEED_SKIP_OT=1 to skip per-game BoxScore calls (faster seed; OT stays 0).
 SKIP_OT_SEED = os.environ.get("NBA_SEED_SKIP_OT", "").lower() in ("1", "true", "yes")
