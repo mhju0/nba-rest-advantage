@@ -25,7 +25,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import psycopg2
+import requests
 from dotenv import load_dotenv
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
@@ -131,7 +133,16 @@ def main() -> None:
     print("[daily_update] fetching CDN schedule to seed future games …")
     cdn_data = fetch_cdn_schedule()
 
-    df = fetch_league_df_date_range(start_str, end_str)
+    try:
+        df = fetch_league_df_date_range(start_str, end_str)
+    except (
+        requests.exceptions.ReadTimeout,
+        requests.exceptions.ConnectionError,
+    ):
+        print(
+            "[daily_update] ⚠️ LeagueGameFinder timed out after retries — skipping score updates, continuing pipeline…"
+        )
+        df = pd.DataFrame()
 
     conn = psycopg2.connect(database_url)
     try:

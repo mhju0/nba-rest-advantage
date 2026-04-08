@@ -1,3 +1,15 @@
+# AI assistant context
+CLAUDE.md
+.claude/
+
+# Environment files
+.env
+.env.local
+.env*.local
+.env.*
+!.env.example
+scripts/.env
+
 # dependencies
 node_modules/
 .pnpm-store/
@@ -8,34 +20,25 @@ out/
 dist/
 build/
 
-# environment variables
-.env
-.env.*
-!.env.example
-
-# python
-scripts/venv/
-scripts/.env
+# Python artifacts
 __pycache__/
 *.pyc
+*.pyo
+scripts/venv/
 .pytest_cache/
 *.egg-info/
 venv/
 .venv/
 
+# Data files (large, not needed in repo)
+scripts/*.csv
+
 # IDE
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
-
-# AI assistants — entire Claude Code directory stays local (never commit)
-.claude/
-
-# Cursor — local agent state; allow committing team rules under .cursor/rules/
-.cursor/**
-!.cursor/rules/
-!.cursor/rules/**
 
 # OS
 .DS_Store

@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pandas as pd
 import psycopg2
+import requests
 from dotenv import load_dotenv
 from nba_api.stats.endpoints import leaguegamefinder
 
@@ -292,15 +293,26 @@ def pair_games_from_date_range_df(
 def fetch_league_df_date_range(date_from: str, date_to: str) -> pd.DataFrame:
     """LeagueGameFinder for an inclusive calendar span (YYYY-MM-DD)."""
     print(f"  Fetching LeagueGameFinder {date_from} … {date_to} …", end=" ", flush=True)
-    finder = leaguegamefinder.LeagueGameFinder(
-        date_from_nullable=date_from,
-        date_to_nullable=date_to,
-        league_id_nullable="00",
-        timeout=90,
-    )
-    out = finder.get_data_frames()[0]
-    print(f"{len(out)} rows")
-    return out
+    for attempt in range(1, 4):
+        try:
+            finder = leaguegamefinder.LeagueGameFinder(
+                date_from_nullable=date_from,
+                date_to_nullable=date_to,
+                league_id_nullable="00",
+                timeout=120,
+            )
+            out = finder.get_data_frames()[0]
+            print(f"{len(out)} rows")
+            return out
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            if attempt == 3:
+                print(flush=True)
+                raise
+            print(
+                f"\n[fetch_schedule] LeagueGameFinder timeout, retrying ({attempt + 1}/3)...",
+                flush=True,
+            )
+            time.sleep(30 if attempt == 1 else 60)
 
 
 def upsert_game_records(conn, records: list[tuple]) -> int:
