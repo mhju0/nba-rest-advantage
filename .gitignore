@@ -48,8 +48,17 @@ desktop.ini
 # vercel
 .vercel/
 
+# Local databases / SQLite
+*.db
+*.sqlite
+*.sqlite3
+
 # typescript
 *.tsbuildinfo
+
+# Tooling caches
+.eslintcache
+.cache/
 
 # testing
 coverage/
